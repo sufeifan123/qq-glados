@@ -6,7 +6,7 @@
 功能：
 - 全自动签到
 - 精准获取当前积分 (Points)
-- PushPlus 微信推送（包含积分、剩余天数、签到结果）
+- 微信测试号模板消息推送（包含积分、剩余天数、签到结果）
 - 智能多域名切换 (优先 glados.cloud)
 - 支持 Cookie-Editor 导出格式
 """
@@ -22,9 +22,13 @@ from datetime import datetime
 if sys.platform.startswith('win'):
     sys.stdout.reconfigure(encoding='utf-8')
 
-# ================= 配置 =================
+# ================= 微信测试号配置（替换成你的！） =================
+WECHAT_APPID = os.environ.get("WECHAT_APPID", "")          # 你的测试号appID
+WECHAT_APPSECRET = os.environ.get("WECHAT_APPSECRET", "")  # 你的测试号appsecret
+WECHAT_TEMPLATE_ID = os.environ.get("WECHAT_TEMPLATE_ID", "")  # 你的模板ID
+WECHAT_OPENID = os.environ.get("WECHAT_OPENID", "")        # 你的微信openID
 
-# 域名优先级：Cloud 第一
+# ================= 原有配置（无需修改） =================
 DOMAINS = [
     "https://glados.cloud",
     "https://glados.rocks", 
@@ -75,7 +79,73 @@ def get_cookies():
     sep = '\n' if '\n' in raw else '&'
     return [extract_cookie(c) for c in raw.split(sep) if c.strip()]
 
-# ================= 核心逻辑 =================
+# ================= 微信测试号推送函数 =================
+def get_wechat_access_token():
+    """获取微信测试号access_token（有效期2小时）"""
+    if not WECHAT_APPID or not WECHAT_APPSECRET:
+        log("❌ 微信测试号参数未配置")
+        return None
+    try:
+        url = f"https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid={WECHAT_APPID}&secret={WECHAT_APPSECRET}"
+        resp = requests.get(url, timeout=10)
+        result = resp.json()
+        if "access_token" in result:
+            return result["access_token"]
+        else:
+            log(f"❌ 获取access_token失败: {result}")
+            return None
+    except Exception as e:
+        log(f"❌ 获取access_token异常: {str(e)}")
+        return None
+
+def wechat_template_push(title, content):
+    """微信测试号模板消息推送（替换原PushPlus）"""
+    # 1. 获取access_token
+    access_token = get_wechat_access_token()
+    if not access_token:
+        return
+    
+    # 2. 解析推送内容，适配模板字段
+    # 提取核心信息（适配模板的keyword1-keyword5）
+    success_cnt = title.split("成功")[1].split("/")[0]
+    total_cnt = title.split("/")[1]
+    
+    # 简化内容，提取关键信息（模板消息不支持复杂HTML，转为纯文本）
+    content_text = content.replace("<br>", "\n").replace("<div>", "").replace("</div>", "").replace("<p>", "").replace("</p>", "").replace("<span>", "").replace("</span>", "").replace("<h3>", "").replace("</h3>", "").replace("<small>", "").replace("</small>", "").replace("<b>", "").replace("</b>", "")
+    # 截断过长内容（微信模板消息有长度限制）
+    content_text = content_text[:500] if len(content_text) > 500 else content_text
+    
+    # 3. 构造模板消息数据
+    url = f"https://api.weixin.qq.com/cgi-bin/message/template/send?access_token={access_token}"
+    data = {
+        "touser": WECHAT_OPENID,
+        "template_id": WECHAT_TEMPLATE_ID,
+        "data": {
+            "first": {"value": title, "color": "#173177"},
+            "keyword1": {"value": f"成功{success_cnt}/{total_cnt}", "color": "#27ae60"},
+            "keyword2": {"value": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "color": "#1E90FF"},
+            "keyword3": {"value": content_text, "color": "#333333"},
+            "remark": {"value": "GLaDOS自动签到通知", "color": "#888888"}
+        }
+    }
+    
+    # 4. 发送推送
+    try:
+        resp = requests.post(
+            url,
+            data=json.dumps(data, ensure_ascii=False).encode("utf-8"),
+            headers={"Content-Type": "application/json;charset=utf-8"},
+            timeout=10
+        )
+        result = resp.json()
+        if result.get("errcode") == 0:
+            log("✅ 微信测试号推送成功")
+        else:
+            log(f"❌ 微信测试号推送失败: {result.get('errmsg')}")
+    except Exception as e:
+        log(f"❌ 微信测试号推送异常: {str(e)}")
+
+# ================= 核心逻辑（无需修改） =================
 
 class GLaDOS:
     def __init__(self, cookie):
@@ -156,16 +226,7 @@ class GLaDOS:
         """执行签到"""
         return self.req('POST', '/api/user/checkin', {'token': 'glados.cloud'})
 
-# ================= 主程序 =================
-
-def pushplus(token, title, content):
-    if not token: return
-    try:
-        url = "http://www.pushplus.plus/send"
-        requests.get(url, params={'token': token, 'title': title, 'content': content, 'template': 'html'}, timeout=5)
-        log("✅ PushPlus 推送成功")
-    except:
-        log("❌ PushPlus 推送失败")
+# ================= 主程序（仅修改推送调用） =================
 
 def main():
     log("🚀 2026 GLaDOS Checkin Starting...")
@@ -206,20 +267,14 @@ def main():
 </div>
 """)
 
-    # Push
-    ptoken = os.environ.get("PUSHPLUS_TOKEN")
-    if ptoken:
-        # Get first user's points for title
-        first_points = "多账户"
-        if len(cookies) == 1:
-            # Re-parse log to find points? Or just use last object
-            # Ideally store objects. Using simplified approach:
-            pass 
-        
+    # 推送（替换为微信测试号）
+    if WECHAT_APPID and WECHAT_APPSECRET and WECHAT_TEMPLATE_ID and WECHAT_OPENID:
         title = f"GLaDOS签到: 成功{success_cnt}/{len(cookies)}"
         content = "".join(results)
         content += f"<br><small>时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</small>"
-        pushplus(ptoken, title, content)
+        wechat_template_push(title, content)
+    else:
+        log("❌ 微信测试号参数未配置完整，跳过推送")
 
 if __name__ == '__main__':
     main()
