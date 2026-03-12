@@ -275,14 +275,12 @@ def main():
         wechat_template_push(title, content)
     else:
         log("❌ 微信测试号参数未配置完整，跳过推送")
-    # 打印具体缺失的参数
-    missing = []
-    missing.append("WECHAT_APPID")
-    missing.append("WECHAT_APPSECRET")
-    missing.append("WECHAT_TEMPLATE_ID")
-    missing.append("WECHAT_OPENID")
-    missing.append("cookie")
-    log(f"❌ 缺失的参数: {', '.join(missing)}")
+    log(f"📝 微信参数配置检查：")
+    log(f"WECHAT_APPID: {'已配置' if WECHAT_APPID else '未配置'} | 实际值: {WECHAT_APPID}")
+    log(f"WECHAT_APPSECRET: {'已配置' if WECHAT_APPSECRET else '未配置'} | 实际值: {WECHAT_APPSECRET}..." if WECHAT_APPSECRET else f"WECHAT_APPSECRET: 未配置 | 实际值: {WECHAT_APPSECRET}")
+    log(f"WECHAT_TEMPLATE_ID: {'已配置' if WECHAT_TEMPLATE_ID else '未配置'} | 实际值: {WECHAT_TEMPLATE_ID}")
+    log(f"WECHAT_OPENID: {'已配置' if WECHAT_OPENID else '未配置'} | 实际值: {WECHAT_OPENID}")
+    log(f"cookies数量: {len(cookies)}")
 
 if __name__ == '__main__':
     main()
