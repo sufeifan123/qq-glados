@@ -274,7 +274,7 @@ def main():
         content += f"<br><small>时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</small>"
         wechat_template_push(title, content)
     else:
-        log("❌ 微信测试号参数未配置完整，跳过推送")
+        log("❌ 微信测试号参数未配置完整，跳过推送{WECHAT_APPID}\n{WECHAT_APPSECRET}\n{WECHAT_TEMPLATE_ID}\n{WECHAT_OPENID}\n{cookies}")
 
 if __name__ == '__main__':
     main()
