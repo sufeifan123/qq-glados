@@ -28,6 +28,11 @@ WECHAT_APPSECRET = os.environ.get("WECHAT_APPSECRET", "")  # 你的测试号apps
 WECHAT_TEMPLATE_ID = os.environ.get("WECHAT_TEMPLATE_ID", "")  # 你的模板ID
 WECHAT_OPENID = os.environ.get("WECHAT_OPENID", "")        # 你的微信openID
 
+log(f"获取WECHAT_APPID: {WECHAT_APPID}")
+log(f"获取WECHAT_APPSECRET: {WECHAT_APPSECRET}")
+log(f"获取WECHAT_TEMPLATE_ID: {WECHAT_TEMPLATE_ID}")
+log(f"获取WECHAT_OPENID: {WECHAT_OPENID}")
+
 # ================= 原有配置（无需修改） =================
 DOMAINS = [
     "https://glados.cloud",
