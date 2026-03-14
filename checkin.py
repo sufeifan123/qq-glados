@@ -20,13 +20,13 @@ from datetime import datetime
 
 # Fix Windows Unicode Output
 if sys.platform.startswith('win'):
-    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stdout.reconfigure(encoding='utf-8')
 
 # ================= 微信测试号配置（替换成你的！） =================
-WECHAT_APPID = os.environ.get("WECHAT_APPID", "")          # 你的测试号appID
-WECHAT_APPSECRET = os.environ.get("WECHAT_APPSECRET", "")  # 你的测试号appsecret
-WECHAT_TEMPLATE_ID = os.environ.get("WECHAT_TEMPLATE_ID", "")  # 你的模板ID
-WECHAT_OPENID = os.environ.get("WECHAT_OPENID", "")        # 你的微信openID
+WECHAT_APPID = os.environ.get("WECHAT_APPID", "")          # 你的测试号appID
+WECHAT_APPSECRET = os.environ.get("WECHAT_APPSECRET", "")  # 你的测试号appsecret
+WECHAT_TEMPLATE_ID = os.environ.get("WECHAT_TEMPLATE_ID", "")  # 你的模板ID
+WECHAT_OPENID = os.environ.get("WECHAT_OPENID", "")        # 你的微信openID
 
 print(f"获取WECHAT_APPID: {WECHAT_APPID}")
 print(f"获取WECHAT_APPSECRET: {WECHAT_APPSECRET}")
@@ -35,255 +35,271 @@ print(f"获取WECHAT_OPENID: {WECHAT_OPENID}")
 
 # ================= 原有配置（无需修改） =================
 DOMAINS = [
-    "https://glados.cloud",
-    "https://glados.rocks", 
-    "https://glados.network",
+    "https://glados.cloud",
+    "https://glados.rocks", 
+    "https://glados.network",
 ]
 
 HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Content-Type': 'application/json;charset=UTF-8',
-    'Accept': 'application/json, text/plain, */*',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Content-Type': 'application/json;charset=UTF-8',
+    'Accept': 'application/json, text/plain, */*',
 }
 
 # ================= 工具函数 =================
 
 def log(msg):
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{ts}] {msg}")
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{ts}] {msg}")
 
 def extract_cookie(raw: str):
-    """提取 Cookie，支持 Cookie-Editor 冒号格式"""
-    if not raw: return None
-    raw = raw.strip()
-    
-    # Cookie-Editor 格式 (koa:sess=xxx; koa:sess.sig=yyy)
-    if 'koa:sess=' in raw or 'koa:sess.sig=' in raw:
-        return raw
-        
-    # JSON
-    if raw.startswith('{'):
-        try:
-            return 'koa.sess=' + json.loads(raw).get('token')
-        except: pass
-        
-    # JWT Token
-    if raw.count('.') == 2 and '=' not in raw and len(raw) > 50:
-        return 'koa:sess=' + raw
-        
-    # Standard
-    return raw
+    """提取 Cookie，支持 Cookie-Editor 冒号格式"""
+    if not raw: return None
+    raw = raw.strip()
+    
+    # Cookie-Editor 格式 (koa:sess=xxx; koa:sess.sig=yyy)
+    if 'koa:sess=' in raw or 'koa:sess.sig=' in raw:
+        return raw
+        
+    # JSON
+    if raw.startswith('{'):
+        try:
+            return 'koa.sess=' + json.loads(raw).get('token')
+        except: pass
+        
+    # JWT Token
+    if raw.count('.') == 2 and '=' not in raw and len(raw) > 50:
+        return 'koa:sess=' + raw
+        
+    # Standard
+    return raw
 
 def get_cookies():
-    raw = os.environ.get("GLADOS_COOKIE", "")
-    if not raw:
-        log("❌ 未配置 GLADOS_COOKIE")
-        return []
-    
-    # 如果包含账号分隔符 '#'，则支持多账号；否则视为单账号
-    # 建议多账号在 Secret 中用 # 隔开，或者直接粘贴原始格式
-    accounts = []
-    if "#" in raw:
-        accounts = [c.strip() for c in raw.split("#") if c.strip()]
-    elif "koa:sess" in raw:
-        # 针对你这种直接粘贴的情况：将所有行合并为一个 cookie 字符串
-        # 移除多余换行，确保 koa:sess 和 koa:sess.sig 在一起
-        clean_cookie = raw.replace('\n', '; ').replace('\r', '').strip()
-        # 处理可能出现的重复分号
-        while ';;' in clean_cookie:
-            clean_cookie = clean_cookie.replace(';;', ';')
-        accounts = [clean_cookie]
-    
-    log(f"解析到 cookies 数量: {len(accounts)}")
-    return accounts
+    raw = os.environ.get("GLADOS_COOKIE", "")
+    if not raw:
+        log("❌ 未配置 GLADOS_COOKIE")
+        return []
+    
+    # 如果包含账号分隔符 '#'，则支持多账号；否则视为单账号
+    # 建议多账号在 Secret 中用 # 隔开，或者直接粘贴原始格式
+    accounts = []
+    if "#" in raw:
+        accounts = [c.strip() for c in raw.split("#") if c.strip()]
+    elif "koa:sess" in raw:
+        # 针对你这种直接粘贴的情况：将所有行合并为一个 cookie 字符串
+        # 移除多余换行，确保 koa:sess 和 koa:sess.sig 在一起
+        clean_cookie = raw.replace('\n', '; ').replace('\r', '').strip()
+        # 处理可能出现的重复分号
+        while ';;' in clean_cookie:
+            clean_cookie = clean_cookie.replace(';;', ';')
+        accounts = [clean_cookie]
+    
+    log(f"解析到 cookies 数量: {len(accounts)}")
+    return accounts
 
 # ================= 微信测试号推送函数 =================
 def get_wechat_access_token():
-    """获取微信测试号access_token（有效期2小时）"""
-    if not WECHAT_APPID or not WECHAT_APPSECRET:
-        log("❌ 微信测试号参数未配置")
-        return None
-    try:
-        url = f"https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid={WECHAT_APPID}&secret={WECHAT_APPSECRET}"
-        resp = requests.get(url, timeout=10)
-        result = resp.json()
-        if "access_token" in result:
-            return result["access_token"]
-        else:
-            log(f"❌ 获取access_token失败: {result}")
-            return None
-    except Exception as e:
-        log(f"❌ 获取access_token异常: {str(e)}")
-        return None
+    """获取微信测试号access_token（有效期2小时）"""
+    if not WECHAT_APPID or not WECHAT_APPSECRET:
+        log("❌ 微信测试号参数未配置")
+        return None
+    try:
+        url = f"https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid={WECHAT_APPID}&secret={WECHAT_APPSECRET}"
+        resp = requests.get(url, timeout=10)
+        result = resp.json()
+        if "access_token" in result:
+            return result["access_token"]
+        else:
+            log(f"❌ 获取access_token失败: {result}")
+            return None
+    except Exception as e:
+        log(f"❌ 获取access_token异常: {str(e)}")
+        return None
 
-def wechat_template_push(title, content_list):
-    """微信测试号模板消息推送
-    content_list: 传入一个包含各用户信息的列表
-    """
-    access_token = get_wechat_access_token()
-    if not access_token:
-        return
-    
-    # 构造 keyword3 的简洁文本
-    content_text = "\n".join(content_list)
-    
-    url = f"https://api.weixin.qq.com/cgi-bin/message/template/send?access_token={access_token}"
-    data = {
-        "touser": WECHAT_OPENID,
-        "template_id": WECHAT_TEMPLATE_ID,
-        "data": {
-            "first": {"value": title, "color": "#173177"},
-            "keyword1": {"value": f"{title.split('成功')[1]}" if "成功" in title else "签到完成", "color": "#27ae60"},
-            "keyword2": {"value": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "color": "#1E90FF"},
-            "keyword3": {"value": content_text, "color": "#333333"},
-            "remark": {"value": "GLaDOS自动签到通知", "color": "#888888"}
-        }
-    }
-    
-    try:
-        resp = requests.post(url, json=data, timeout=10)
-        result = resp.json()
-        if result.get("errcode") == 0:
-            log("✅ 微信测试号推送成功")
-        else:
-            log(f"❌ 微信测试号推送失败: {result.get('errmsg')}")
-    except Exception as e:
-        log(f"❌ 微信测试号推送异常: {str(e)}")
-    
-    # 4. 发送推送
-    try:
-        resp = requests.post(
-            url,
-            data=json.dumps(data, ensure_ascii=False).encode("utf-8"),
-            headers={"Content-Type": "application/json;charset=utf-8"},
-            timeout=10
-        )
-        result = resp.json()
-        if result.get("errcode") == 0:
-            log("✅ 微信测试号推送成功")
-        else:
-            log(f"❌ 微信测试号推送失败: {result.get('errmsg')}")
-    except Exception as e:
-        log(f"❌ 微信测试号推送异常: {str(e)}")
+def wechat_template_push(title, content):
+    """微信测试号模板消息推送（替换原PushPlus）"""
+    # 1. 获取access_token
+    access_token = get_wechat_access_token()
+    if not access_token:
+        return
+    
+    # 2. 解析推送内容，适配模板字段
+    # 提取核心信息（适配模板的keyword1-keyword5）
+    success_cnt = title.split("成功")[1].split("/")[0]
+    total_cnt = title.split("/")[1]
+    
+    # 简化内容，提取关键信息（模板消息不支持复杂HTML，转为纯文本）
+    content_text = content.replace("<br>", "\n").replace("<div>", "").replace("</div>", "").replace("<p>", "").replace("</p>", "").replace("<span>", "").replace("</span>", "").replace("<h3>", "").replace("</h3>", "").replace("<small>", "").replace("</small>", "").replace("<b>", "").replace("</b>", "")
+    # 截断过长内容（微信模板消息有长度限制）
+    content_text = content_text[:500] if len(content_text) > 500 else content_text
+    
+    # 3. 构造模板消息数据
+    url = f"https://api.weixin.qq.com/cgi-bin/message/template/send?access_token={access_token}"
+    data = {
+        "touser": WECHAT_OPENID,
+        "template_id": WECHAT_TEMPLATE_ID,
+        "data": {
+            "first": {"value": title, "color": "#173177"},
+            "keyword1": {"value": f"成功{success_cnt}/{total_cnt}", "color": "#27ae60"},
+            "keyword2": {"value": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "color": "#1E90FF"},
+            "keyword3": {"value": content_text, "color": "#333333"},
+            "remark": {"value": "GLaDOS自动签到通知", "color": "#888888"}
+        }
+    }
+    
+    # 4. 发送推送
+    try:
+        resp = requests.post(
+            url,
+            data=json.dumps(data, ensure_ascii=False).encode("utf-8"),
+            headers={"Content-Type": "application/json;charset=utf-8"},
+            timeout=10
+        )
+        result = resp.json()
+        if result.get("errcode") == 0:
+            log("✅ 微信测试号推送成功")
+        else:
+            log(f"❌ 微信测试号推送失败: {result.get('errmsg')}")
+    except Exception as e:
+        log(f"❌ 微信测试号推送异常: {str(e)}")
 
 # ================= 核心逻辑（无需修改） =================
 
 class GLaDOS:
-    def __init__(self, cookie):
-        self.cookie = cookie
-        self.domain = DOMAINS[0]
-        self.email = "?"
-        self.left_days = "?"
-        self.points = "?"
-        self.points_change = "?"
-        self.exchange_info = ""
-        self.plan = "?"
-        
-    def req(self, method, path, data=None):
-        """带自动域名切换的请求"""
-        for d in DOMAINS:
-            try:
-                url = f"{d}{path}"
-                h = HEADERS.copy()
-                h['Cookie'] = self.cookie
-                h['Origin'] = d
-                h['Referer'] = f"{d}/console/checkin"
-                
-                if method == 'GET':
-                    resp = requests.get(url, headers=h, timeout=10)
-                else:
-                    resp = requests.post(url, headers=h, json=data, timeout=10)
-                
-                if resp.status_code == 200:
-                    self.domain = d # Remember working domain
-                    return resp.json()
-            except Exception as e:
-                log(f"⚠️ {d} 请求失败: {e}")
-                continue
-        return None
+    def __init__(self, cookie):
+        self.cookie = cookie
+        self.domain = DOMAINS[0]
+        self.email = "?"
+        self.left_days = "?"
+        self.points = "?"
+        self.points_change = "?"
+        self.exchange_info = ""
+        self.plan = "?"
+        
+    def req(self, method, path, data=None):
+        """带自动域名切换的请求"""
+        for d in DOMAINS:
+            try:
+                url = f"{d}{path}"
+                h = HEADERS.copy()
+                h['Cookie'] = self.cookie
+                h['Origin'] = d
+                h['Referer'] = f"{d}/console/checkin"
+                
+                if method == 'GET':
+                    resp = requests.get(url, headers=h, timeout=10)
+                else:
+                    resp = requests.post(url, headers=h, json=data, timeout=10)
+                
+                if resp.status_code == 200:
+                    self.domain = d # Remember working domain
+                    return resp.json()
+            except Exception as e:
+                log(f"⚠️ {d} 请求失败: {e}")
+                continue
+        return None
 
-    def get_status(self):
-        """获取状态：天数、邮箱"""
-        res = self.req('GET', '/api/user/status')
-        if res and 'data' in res:
-            d = res['data']
-            self.email = d.get('email', 'Unknown')
-            self.left_days = str(d.get('leftDays', '?')).split('.')[0]
-            return True
-        return False
+    def get_status(self):
+        """获取状态：天数、邮箱"""
+        res = self.req('GET', '/api/user/status')
+        if res and 'data' in res:
+            d = res['data']
+            self.email = d.get('email', 'Unknown')
+            self.left_days = str(d.get('leftDays', '?')).split('.')[0]
+            return True
+        return False
 
-    def get_points(self):
-        """获取积分、变化历史、兑换计划"""
-        res = self.req('GET', '/api/user/points')
-        if res and 'points' in res:
-            # 当前积分
-            self.points = str(res.get('points', '0')).split('.')[0]
-            
-            # 最近一次积分变化
-            history = res.get('history', [])
-            if history:
-                last = history[0]
-                change = str(last.get('change', '0')).split('.')[0]
-                if not change.startswith('-'):
-                    change = '+' + change
-                self.points_change = change
-            
-            # 兑换计划
-            plans = res.get('plans', {})
-            pts = int(self.points)
-            exchange_lines = []
-            for plan_id, plan_data in plans.items():
-                need = plan_data['points']
-                days = plan_data['days']
-                if pts >= need:
-                    exchange_lines.append(f"✅ {need}分→{days}天 (可兑换)")
-                else:
-                    exchange_lines.append(f"❌ {need}分→{days}天 (差{need-pts}分)")
-            self.exchange_info = "<br>".join(exchange_lines)
-            return True
-        return False
+    def get_points(self):
+        """获取积分、变化历史、兑换计划"""
+        res = self.req('GET', '/api/user/points')
+        if res and 'points' in res:
+            # 当前积分
+            self.points = str(res.get('points', '0')).split('.')[0]
+            
+            # 最近一次积分变化
+            history = res.get('history', [])
+            if history:
+                last = history[0]
+                change = str(last.get('change', '0')).split('.')[0]
+                if not change.startswith('-'):
+                    change = '+' + change
+                self.points_change = change
+            
+            # 兑换计划
+            plans = res.get('plans', {})
+            pts = int(self.points)
+            exchange_lines = []
+            for plan_id, plan_data in plans.items():
+                need = plan_data['points']
+                days = plan_data['days']
+                if pts >= need:
+                    exchange_lines.append(f"✅ {need}分→{days}天 (可兑换)")
+                else:
+                    exchange_lines.append(f"❌ {need}分→{days}天 (差{need-pts}分)")
+            self.exchange_info = "<br>".join(exchange_lines)
+            return True
+        return False
 
-    def checkin(self):
-        """执行签到"""
-        return self.req('POST', '/api/user/checkin', {'token': 'glados.cloud'})
+    def checkin(self):
+        """执行签到"""
+        return self.req('POST', '/api/user/checkin', {'token': 'glados.cloud'})
 
 # ================= 主程序（仅修改推送调用） =================
 
 def main():
-    log("🚀 2026 GLaDOS Checkin Starting...")
-    cookies = get_cookies()
-    if not cookies: sys.exit(1)
-    
-    push_lines = []  # 用于微信推送的简洁文本列表
-    success_cnt = 0
-    
-    for i, cookie in enumerate(cookies, 1):
-        g = GLaDOS(cookie)
-        
-        # 1. 执行签到
-        res = g.checkin()
-        msg = res.get('message', 'Failure') if res else "Network Error"
-        
-        # 2. 获取最新状态
-        g.get_status()
-        g.get_points()
-        
-        # 3. 打印日志
-        log(f"用户: {g.email} | 积分: {g.points} | 天数: {g.left_days} | 结果: {msg}")
-        
-        # 4. 构造微信显示的行格式（对应你图片中的样式）
-        line = f"用户: {g.email} | 积分: {g.points} | 天数: {g.left_days} | 结果: {msg}"
-        push_lines.append(line)
-        
-        if res and ("Checkin" in msg or "Success" in msg or "tomorrow" in msg):
-            success_cnt += 1
+    log("🚀 2026 GLaDOS Checkin Starting...")
+    cookies = get_cookies()
+    if not cookies: sys.exit(1)
+    
+    results = []
+    success_cnt = 0
+    
+    for i, cookie in enumerate(cookies, 1):
+        g = GLaDOS(cookie)
+        
+        # 1. Checkin
+        res = g.checkin()
+        msg = res.get('message', 'Failure') if res else "Network Error"
+        
+        # 2. Get Info (Refresh data)
+        g.get_status()
+        g.get_points()
+        
+        # 3. Log
+        status_icon = "✅" if "Checkin" in msg else "⚠️"
+        log(f"用户: {g.email} | 积分: {g.points} | 天数: {g.left_days} | 结果: {msg}")
+        
+        if "Checkin" in msg: success_cnt += 1
+        
+        # 4. Result Formatting
+        results.append(f"""
+<div style="border:2px solid #333; padding:15px; margin-bottom:15px; border-radius:10px; background:#fff;">
+    <h3 style="margin:0 0 15px 0; color:#333; border-bottom:2px solid #333; padding-bottom:8px;">👤 {g.email}</h3>
+    <p style="margin:8px 0; color:#000; font-size:16px;"><b>当前积分:</b> <span style="color:#e74c3c; font-size:22px; font-weight:bold;">{g.points}</span> <span style="color:#27ae60; font-weight:bold;">({g.points_change})</span></p>
+    <p style="margin:8px 0; color:#000; font-size:16px;"><b>剩余天数:</b> <span style="font-weight:bold;">{g.left_days} 天</span></p>
+    <p style="margin:8px 0; color:#000; font-size:16px;"><b>签到结果:</b> {msg}</p>
+    <div style="margin-top:15px; padding:12px; background:#f0f0f0; border-radius:8px; border:1px solid #ccc;">
+        <p style="margin:0 0 8px 0; color:#333; font-weight:bold; font-size:15px;">🎁 兑换选项:</p>
+        <p style="margin:0; color:#000; font-size:14px; line-height:1.8;">{g.exchange_info}</p>
+    </div>
+</div>
+""")
 
-    # 5. 执行推送
-    if WECHAT_APPID and WECHAT_APPSECRET and WECHAT_TEMPLATE_ID and WECHAT_OPENID:
-        title = f"GLaDOS签到: 成功{success_cnt}/{len(cookies)}"
-        wechat_template_push(title, push_lines)
-    else:
-        log("❌ 微信测试号参数未配置完整，跳过推送")
+    log(f"📝 微信参数配置检查：")
+    log(f"WECHAT_APPID: {'已配置' if WECHAT_APPID else '未配置'} | 实际值: {WECHAT_APPID}")
+    log(f"WECHAT_APPSECRET: {'已配置' if WECHAT_APPSECRET else '未配置'} | 实际值: {WECHAT_APPSECRET}..." if WECHAT_APPSECRET else f"WECHAT_APPSECRET: 未配置 | 实际值: {WECHAT_APPSECRET}")
+    log(f"WECHAT_TEMPLATE_ID: {'已配置' if WECHAT_TEMPLATE_ID else '未配置'} | 实际值: {WECHAT_TEMPLATE_ID}")
+    log(f"WECHAT_OPENID: {'已配置' if WECHAT_OPENID else '未配置'} | 实际值: {WECHAT_OPENID}")
+    log(f"cookies数量: {cookies}")
+
+    # 推送（替换为微信测试号）
+    if WECHAT_APPID and WECHAT_APPSECRET and WECHAT_TEMPLATE_ID and WECHAT_OPENID:
+        title = f"GLaDOS签到: 成功{success_cnt}/{len(cookies)}"
+        content = "".join(results)
+        content += f"<br><small>时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</small>"
+        wechat_template_push(title, content)
+    else:
+        log("❌ 微信测试号参数未配置完整，跳过推送")
 
 if __name__ == '__main__':
-    main()
+    main()
