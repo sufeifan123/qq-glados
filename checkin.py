@@ -116,54 +116,32 @@ def get_wechat_access_token():
         log(f"❌ 获取access_token异常: {str(e)}")
         return None
 
-def wechat_template_push(title, content):
-    """微信测试号模板消息推送"""
+def wechat_template_push(title, content_list):
+    """微信测试号模板消息推送
+    content_list: 传入一个包含各用户信息的列表
+    """
     access_token = get_wechat_access_token()
     if not access_token:
         return
     
-    # --- 修改核心部分：重新构造更简洁的内容 ---
-    # 我们直接从 main 函数传入的 g 对象属性中构造你想要的格式，而不是去解析 HTML
-    # 但为了不改动 main 函数结构，我们在这里对传入的 HTML 做一次精准提取
-    import re
+    # 构造 keyword3 的简洁文本
+    content_text = "\n".join(content_list)
     
-    # 提取所有账号的信息块
-    # 格式：用户: email | 积分: points | 天数: days | 结果: message
-    items = []
-    # 这里通过正则匹配你 main 函数里生成的 HTML 标签内容
-    emails = re.findall(r"👤 (.*?)</h3>", content)
-    points = re.findall(r"当前积分:</b> .*?>(.*?)</span>", content)
-    changes = re.findall(r"color:#27ae60; font-weight:bold;">\((.*?)\)</span>", content)
-    days = re.findall(r"剩余天数:</b> .*?>(.*?)</span>", content)
-    results = re.findall(r"签到结果:</b> (.*?)</p>", content)
-
-    for i in range(len(emails)):
-        line = f"用户: {emails[i]} | 积分: {points[i]} | 天数: {days[i]} | 结果: {results[i]}"
-        items.append(line)
-    
-    content_text = "\n".join(items)
-    # ----------------------------------------
-
     url = f"https://api.weixin.qq.com/cgi-bin/message/template/send?access_token={access_token}"
     data = {
         "touser": WECHAT_OPENID,
         "template_id": WECHAT_TEMPLATE_ID,
         "data": {
             "first": {"value": title, "color": "#173177"},
-            "keyword1": {"value": title.split(": ")[1] if ": " in title else title, "color": "#27ae60"},
+            "keyword1": {"value": f"{title.split('成功')[1]}" if "成功" in title else "签到完成", "color": "#27ae60"},
             "keyword2": {"value": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "color": "#1E90FF"},
-            "keyword3": {"value": content_text, "color": "#333333"}, # 这里就是你想要的简洁行
+            "keyword3": {"value": content_text, "color": "#333333"},
             "remark": {"value": "GLaDOS自动签到通知", "color": "#888888"}
         }
     }
     
     try:
-        resp = requests.post(
-            url,
-            data=json.dumps(data, ensure_ascii=False).encode("utf-8"),
-            headers={"Content-Type": "application/json;charset=utf-8"},
-            timeout=10
-        )
+        resp = requests.post(url, json=data, timeout=10)
         result = resp.json()
         if result.get("errcode") == 0:
             log("✅ 微信测试号推送成功")
@@ -276,53 +254,34 @@ def main():
     cookies = get_cookies()
     if not cookies: sys.exit(1)
     
-    results = []
+    push_lines = []  # 用于微信推送的简洁文本列表
     success_cnt = 0
     
     for i, cookie in enumerate(cookies, 1):
         g = GLaDOS(cookie)
         
-        # 1. Checkin
+        # 1. 执行签到
         res = g.checkin()
         msg = res.get('message', 'Failure') if res else "Network Error"
         
-        # 2. Get Info (Refresh data)
+        # 2. 获取最新状态
         g.get_status()
         g.get_points()
         
-        # 3. Log
-        status_icon = "✅" if "Checkin" in msg else "⚠️"
+        # 3. 打印日志
         log(f"用户: {g.email} | 积分: {g.points} | 天数: {g.left_days} | 结果: {msg}")
         
-        if "Checkin" in msg: success_cnt += 1
+        # 4. 构造微信显示的行格式（对应你图片中的样式）
+        line = f"用户: {g.email} | 积分: {g.points} | 天数: {g.left_days} | 结果: {msg}"
+        push_lines.append(line)
         
-        # 4. Result Formatting
-        results.append(f"""
-<div style="border:2px solid #333; padding:15px; margin-bottom:15px; border-radius:10px; background:#fff;">
-    <h3 style="margin:0 0 15px 0; color:#333; border-bottom:2px solid #333; padding-bottom:8px;">👤 {g.email}</h3>
-    <p style="margin:8px 0; color:#000; font-size:16px;"><b>当前积分:</b> <span style="color:#e74c3c; font-size:22px; font-weight:bold;">{g.points}</span> <span style="color:#27ae60; font-weight:bold;">({g.points_change})</span></p>
-    <p style="margin:8px 0; color:#000; font-size:16px;"><b>剩余天数:</b> <span style="font-weight:bold;">{g.left_days} 天</span></p>
-    <p style="margin:8px 0; color:#000; font-size:16px;"><b>签到结果:</b> {msg}</p>
-    <div style="margin-top:15px; padding:12px; background:#f0f0f0; border-radius:8px; border:1px solid #ccc;">
-        <p style="margin:0 0 8px 0; color:#333; font-weight:bold; font-size:15px;">🎁 兑换选项:</p>
-        <p style="margin:0; color:#000; font-size:14px; line-height:1.8;">{g.exchange_info}</p>
-    </div>
-</div>
-""")
+        if res and ("Checkin" in msg or "Success" in msg or "tomorrow" in msg):
+            success_cnt += 1
 
-    log(f"📝 微信参数配置检查：")
-    log(f"WECHAT_APPID: {'已配置' if WECHAT_APPID else '未配置'} | 实际值: {WECHAT_APPID}")
-    log(f"WECHAT_APPSECRET: {'已配置' if WECHAT_APPSECRET else '未配置'} | 实际值: {WECHAT_APPSECRET}..." if WECHAT_APPSECRET else f"WECHAT_APPSECRET: 未配置 | 实际值: {WECHAT_APPSECRET}")
-    log(f"WECHAT_TEMPLATE_ID: {'已配置' if WECHAT_TEMPLATE_ID else '未配置'} | 实际值: {WECHAT_TEMPLATE_ID}")
-    log(f"WECHAT_OPENID: {'已配置' if WECHAT_OPENID else '未配置'} | 实际值: {WECHAT_OPENID}")
-    log(f"cookies数量: {cookies}")
-
-    # 推送（替换为微信测试号）
+    # 5. 执行推送
     if WECHAT_APPID and WECHAT_APPSECRET and WECHAT_TEMPLATE_ID and WECHAT_OPENID:
         title = f"GLaDOS签到: 成功{success_cnt}/{len(cookies)}"
-        content = "".join(results)
-        content += f"<br><small>时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</small>"
-        wechat_template_push(title, content)
+        wechat_template_push(title, push_lines)
     else:
         log("❌ 微信测试号参数未配置完整，跳过推送")
 
