@@ -117,35 +117,60 @@ def get_wechat_access_token():
         return None
 
 def wechat_template_push(title, content):
-    """微信测试号模板消息推送（替换原PushPlus）"""
-    # 1. 获取access_token
+    """微信测试号模板消息推送"""
     access_token = get_wechat_access_token()
     if not access_token:
         return
     
-    # 2. 解析推送内容，适配模板字段
-    # 提取核心信息（适配模板的keyword1-keyword5）
-    success_cnt = title.split("成功")[1].split("/")[0]
-    total_cnt = title.split("/")[1]
+    # --- 修改核心部分：重新构造更简洁的内容 ---
+    # 我们直接从 main 函数传入的 g 对象属性中构造你想要的格式，而不是去解析 HTML
+    # 但为了不改动 main 函数结构，我们在这里对传入的 HTML 做一次精准提取
+    import re
     
-    # 简化内容，提取关键信息（模板消息不支持复杂HTML，转为纯文本）
-    content_text = content.replace("<br>", "\n").replace("<div>", "").replace("</div>", "").replace("<p>", "").replace("</p>", "").replace("<span>", "").replace("</span>", "").replace("<h3>", "").replace("</h3>", "").replace("<small>", "").replace("</small>", "").replace("<b>", "").replace("</b>", "")
-    # 截断过长内容（微信模板消息有长度限制）
-    content_text = content_text[:500] if len(content_text) > 500 else content_text
+    # 提取所有账号的信息块
+    # 格式：用户: email | 积分: points | 天数: days | 结果: message
+    items = []
+    # 这里通过正则匹配你 main 函数里生成的 HTML 标签内容
+    emails = re.findall(r"👤 (.*?)</h3>", content)
+    points = re.findall(r"当前积分:</b> .*?>(.*?)</span>", content)
+    changes = re.findall(r"color:#27ae60; font-weight:bold;">\((.*?)\)</span>", content)
+    days = re.findall(r"剩余天数:</b> .*?>(.*?)</span>", content)
+    results = re.findall(r"签到结果:</b> (.*?)</p>", content)
+
+    for i in range(len(emails)):
+        line = f"用户: {emails[i]} | 积分: {points[i]} | 天数: {days[i]} | 结果: {results[i]}"
+        items.append(line)
     
-    # 3. 构造模板消息数据
+    content_text = "\n".join(items)
+    # ----------------------------------------
+
     url = f"https://api.weixin.qq.com/cgi-bin/message/template/send?access_token={access_token}"
     data = {
         "touser": WECHAT_OPENID,
         "template_id": WECHAT_TEMPLATE_ID,
         "data": {
             "first": {"value": title, "color": "#173177"},
-            "keyword1": {"value": f"成功{success_cnt}/{total_cnt}", "color": "#27ae60"},
+            "keyword1": {"value": title.split(": ")[1] if ": " in title else title, "color": "#27ae60"},
             "keyword2": {"value": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "color": "#1E90FF"},
-            "keyword3": {"value": content_text, "color": "#333333"},
+            "keyword3": {"value": content_text, "color": "#333333"}, # 这里就是你想要的简洁行
             "remark": {"value": "GLaDOS自动签到通知", "color": "#888888"}
         }
     }
+    
+    try:
+        resp = requests.post(
+            url,
+            data=json.dumps(data, ensure_ascii=False).encode("utf-8"),
+            headers={"Content-Type": "application/json;charset=utf-8"},
+            timeout=10
+        )
+        result = resp.json()
+        if result.get("errcode") == 0:
+            log("✅ 微信测试号推送成功")
+        else:
+            log(f"❌ 微信测试号推送失败: {result.get('errmsg')}")
+    except Exception as e:
+        log(f"❌ 微信测试号推送异常: {str(e)}")
     
     # 4. 发送推送
     try:
