@@ -80,9 +80,22 @@ def get_cookies():
         log("❌ 未配置 GLADOS_COOKIE")
         return []
     
-    # Split by enter or &
-    sep = '\n' if '\n' in raw else '&'
-    return [extract_cookie(c) for c in raw.split(sep) if c.strip()]
+    # 如果包含账号分隔符 '#'，则支持多账号；否则视为单账号
+    # 建议多账号在 Secret 中用 # 隔开，或者直接粘贴原始格式
+    accounts = []
+    if "#" in raw:
+        accounts = [c.strip() for c in raw.split("#") if c.strip()]
+    elif "koa:sess" in raw:
+        # 针对你这种直接粘贴的情况：将所有行合并为一个 cookie 字符串
+        # 移除多余换行，确保 koa:sess 和 koa:sess.sig 在一起
+        clean_cookie = raw.replace('\n', '; ').replace('\r', '').strip()
+        # 处理可能出现的重复分号
+        while ';;' in clean_cookie:
+            clean_cookie = clean_cookie.replace(';;', ';')
+        accounts = [clean_cookie]
+    
+    log(f"解析到 cookies 数量: {len(accounts)}")
+    return accounts
 
 # ================= 微信测试号推送函数 =================
 def get_wechat_access_token():
