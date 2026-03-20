@@ -111,7 +111,7 @@ def get_wechat_access_token():
         log(f"❌ 获取access_token异常: {str(e)}")
         return None
 
-def wechat_template_push(title, content):
+def wechat_template_push(title, point_cnt,day_cnt):
     """微信测试号模板消息推送（替换原PushPlus）"""
     # 1. 获取access_token
     access_token = get_wechat_access_token()
@@ -138,7 +138,7 @@ def wechat_template_push(title, content):
         "data": {
             "first": {"value": title, "color": "#173177"},
             "keyword1": {"value": f"成功{success_cnt}/{total_cnt}", "color": "#27ae60"},
-            "keyword2": {"value": f"{content_text}", "color": "#1E90FF"},
+            "keyword2": {"value": f"积分/剩余天数{point_cnt}/{day_cnt}", "color": "#1E90FF"},
             "keyword3": {"value": content_text, "color": "#333333"},
             "remark": {"value": "GLaDOS自动签到通知", "color": "#888888"}
         }
@@ -250,6 +250,8 @@ def main():
     
     results = []
     success_cnt = 0
+    point_cnt = 0
+    day_cnt = 0
     
     for i, cookie in enumerate(cookies, 1):
         g = GLaDOS(cookie)
@@ -265,6 +267,8 @@ def main():
         # 3. Log
         status_icon = "✅" if "Checkin" in msg else "⚠️"
         log(f"用户: {g.email} | 积分: {g.points} | 天数: {g.left_days} | 结果: {msg}")
+        point_cnt = g.points
+        day_cnt = g.left_days
         
         if "Checkin" in msg: success_cnt += 1
         
@@ -294,7 +298,7 @@ def main():
         title = f"GLaDOS签到: 成功{success_cnt}/{len(cookies)}"
         content = "".join(results)
         content += f"<br><small>时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</small>"
-        wechat_template_push(title, content)
+        wechat_template_push(title, point_cnt,day_cnt)
     else:
         log("❌ 微信测试号参数未配置完整，跳过推送")
 
