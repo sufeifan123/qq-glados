@@ -124,11 +124,11 @@ def wechat_template_push(title, point_cnt,day_cnt):
     total_cnt = title.split("/")[1]
     
     # 简化内容，提取关键信息（模板消息不支持复杂HTML，转为纯文本）
-    content_text = content.replace("<br>", "\n").replace("<div>", "").replace("</div>", "").replace("<p>", "").replace("</p>", "").replace("<span>", "").replace("</span>", "").replace("<h3>", "").replace("</h3>", "").replace("<small>", "").replace("</small>", "").replace("<b>", "").replace("</b>", "")
+    #content_text = content.replace("<br>", "\n").replace("<div>", "").replace("</div>", "").replace("<p>", "").replace("</p>", "").replace("<span>", "").replace("</span>", "").replace("<h3>", "").replace("</h3>", "").replace("<small>", "").replace("</small>", "").replace("<b>", "").replace("</b>", "")
     # 截断过长内容（微信模板消息有长度限制）
-    content_text = content_text[:500] if len(content_text) > 500 else content_text
+    #content_text = content_text[:500] if len(content_text) > 500 else content_text
 
-    log(f"content_text: {content_text}")
+    #log(f"content_text: {content_text}")
     
     # 3. 构造模板消息数据
     url = f"https://api.weixin.qq.com/cgi-bin/message/template/send?access_token={access_token}"
@@ -139,7 +139,7 @@ def wechat_template_push(title, point_cnt,day_cnt):
             "first": {"value": title, "color": "#173177"},
             "keyword1": {"value": f"成功{success_cnt}/{total_cnt}", "color": "#27ae60"},
             "keyword2": {"value": f"积分/剩余天数{point_cnt}/{day_cnt}", "color": "#1E90FF"},
-            "keyword3": {"value": content_text, "color": "#333333"},
+            "keyword3": {"value": f"结束", "color": "#333333"},
             "remark": {"value": "GLaDOS自动签到通知", "color": "#888888"}
         }
     }
