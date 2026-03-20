@@ -138,7 +138,7 @@ def wechat_template_push(title, content):
         "data": {
             "first": {"value": title, "color": "#173177"},
             "keyword1": {"value": f"成功{success_cnt}/{total_cnt}", "color": "#27ae60"},
-            "keyword2": {"value": content_text, "color": "#1E90FF"},
+            "keyword2": {"value": f"{content_text}", "color": "#1E90FF"},
             "keyword3": {"value": content_text, "color": "#333333"},
             "remark": {"value": "GLaDOS自动签到通知", "color": "#888888"}
         }
