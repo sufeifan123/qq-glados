@@ -127,6 +127,8 @@ def wechat_template_push(title, content):
     content_text = content.replace("<br>", "\n").replace("<div>", "").replace("</div>", "").replace("<p>", "").replace("</p>", "").replace("<span>", "").replace("</span>", "").replace("<h3>", "").replace("</h3>", "").replace("<small>", "").replace("</small>", "").replace("<b>", "").replace("</b>", "")
     # 截断过长内容（微信模板消息有长度限制）
     content_text = content_text[:500] if len(content_text) > 500 else content_text
+
+    log(f"content_text: {content_text}")
     
     # 3. 构造模板消息数据
     url = f"https://api.weixin.qq.com/cgi-bin/message/template/send?access_token={access_token}"
