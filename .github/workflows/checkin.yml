@@ -28,6 +28,8 @@ jobs:
         run: python checkin.py
         env:
           GLADOS_COOKIE: ${{ secrets.GLADOS_COOKIE }}
+          # 必须与生成 gld:sess 的登录浏览器一致。
+          GLADOS_USER_AGENT: ${{ vars.GLADOS_USER_AGENT }}
           WECHAT_APPID: ${{ secrets.WECHAT_APPID }}
           WECHAT_APPSECRET: ${{ secrets.WECHAT_APPSECRET }}
           WECHAT_TEMPLATE_ID: ${{ secrets.WECHAT_TEMPLATE_ID }}
