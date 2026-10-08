@@ -13,6 +13,7 @@ GLaDOS 自动签到
 
 import json
 import os
+import re
 import sys
 import time
 from datetime import datetime
@@ -32,14 +33,19 @@ DOMAINS = [
     "https://glados.network",
 ]
 
+DEFAULT_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/120.0.0.0 Safari/537.36"
+)
+
 HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0.0.0 Safari/537.36"
-    ),
     "Content-Type": "application/json;charset=UTF-8",
     "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-origin",
 }
 
 WECHAT_APPID = os.environ.get("WECHAT_APPID", "")
@@ -52,6 +58,9 @@ NORMAL_CHECKIN_MESSAGES = (
     "checkin repeats",
     "today's observation logged",
 )
+
+CURRENT_SESSION_COOKIES = ("gld:sess", "gld:sess.sig")
+LEGACY_SESSION_COOKIES = ("koa:sess", "koa:sess.sig")
 
 
 # ================= 工具函数 =================
@@ -97,6 +106,9 @@ def normalize_cookie(value):
     if not value:
         return None
 
+    # 兼容从浏览器请求头直接复制的 `Cookie: ...`。
+    value = re.sub(r"^cookie\s*:\s*", "", value, flags=re.IGNORECASE)
+
     # JSON 对象
     if value.startswith("{"):
         try:
@@ -105,7 +117,10 @@ def normalize_cookie(value):
             return None
 
     # 标准 GLaDOS Cookie
-    if "koa:sess=" in value or "koa:sess.sig=" in value:
+    if any(
+        f"{name}=" in value
+        for name in CURRENT_SESSION_COOKIES + LEGACY_SESSION_COOKIES
+    ):
         return (
             value.replace("\r", "")
             .replace("\n", "; ")
@@ -118,6 +133,67 @@ def normalize_cookie(value):
         return f"koa:sess={value}"
 
     return value
+
+
+def get_cookie_names(cookie_header):
+    """仅提取 Cookie 名称，绝不把 Cookie 值写入日志。"""
+    names = set()
+
+    for item in cookie_header.split(";"):
+        name, separator, _ = item.strip().partition("=")
+        if separator and name:
+            names.add(name)
+
+    return names
+
+
+def get_session_cookie_kind(cookie_header):
+    """识别完整的新版或旧版签名会话 Cookie。"""
+    names = get_cookie_names(cookie_header)
+
+    if set(CURRENT_SESSION_COOKIES).issubset(names):
+        return "gld"
+
+    if set(LEGACY_SESSION_COOKIES).issubset(names):
+        return "koa"
+
+    return None
+
+
+def get_browser_headers():
+    """构造与生成当前登录会话的浏览器一致的请求头。"""
+    user_agent = (
+        os.environ.get("GLADOS_USER_AGENT", "").strip()
+        or DEFAULT_USER_AGENT
+    )
+    headers = {"User-Agent": user_agent}
+
+    chrome = re.search(r"(?:Chrome|Chromium)/(\d+)", user_agent)
+    if chrome:
+        major = chrome.group(1)
+
+        if "Macintosh" in user_agent:
+            platform = "macOS"
+        elif "Windows" in user_agent:
+            platform = "Windows"
+        elif "Android" in user_agent:
+            platform = "Android"
+        elif "Linux" in user_agent:
+            platform = "Linux"
+        else:
+            platform = "Unknown"
+
+        headers.update({
+            "Sec-CH-UA": (
+                f'"Chromium";v="{major}", '
+                f'"Google Chrome";v="{major}", '
+                '"Not_A Brand";v="99"'
+            ),
+            "Sec-CH-UA-Mobile": "?1" if "Mobile" in user_agent else "?0",
+            "Sec-CH-UA-Platform": f'"{platform}"',
+        })
+
+    return headers
 
 
 def get_cookies():
@@ -304,10 +380,17 @@ class GLaDOS:
         self.left_days = "?"
         self.points = "?"
 
+        if get_session_cookie_kind(cookie) != "gld":
+            log(
+                "⚠️ Cookie 未包含完整的 gld:sess 与 gld:sess.sig；"
+                "2026-09 新版接口可能返回‘没有权限’"
+            )
+
     def request(self, method, path, data=None):
         for domain in DOMAINS:
             try:
                 headers = HEADERS.copy()
+                headers.update(get_browser_headers())
                 headers["Cookie"] = self.cookie
                 headers["Origin"] = domain
                 headers["Referer"] = f"{domain}/console/checkin"
