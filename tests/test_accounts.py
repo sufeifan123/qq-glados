@@ -112,6 +112,41 @@ class AccountTests(unittest.TestCase):
             self.assertIn('备用账号 [BACKUP]', stats)
             self.assertIn('失败', stats)
 
+    def test_two_accounts_have_separate_compact_fields(self):
+        items = [
+            {'id': 'U156', 'name': '账号156', 'label': '账号156 [U156]', 'points': '169', 'days': '266', 'success': True},
+            {'id': 'U290', 'name': '账号290', 'label': '账号290 [U290]', 'points': '191', 'days': '278', 'success': True},
+        ]
+        messages = checkin.build_wechat_messages(2, 2, items)
+        self.assertEqual(len(messages), 1)
+        fields = messages[0]['data']
+        self.assertEqual(fields['keyword1']['value'], '正常 2/2')
+        self.assertEqual(fields['keyword2']['value'], '账号156：169分 / 266天')
+        self.assertEqual(fields['keyword3']['value'], '账号290：191分 / 278天')
+        self.assertNotIn('[U156]', fields['keyword2']['value'])
+
+    def test_more_accounts_are_batched_without_dropping_any(self):
+        items = [
+            {'name': f'账号{i}', 'points': str(i), 'days': '100', 'success': i != 2}
+            for i in range(7)
+        ]
+        messages = checkin.build_wechat_messages(6, 7, items)
+        self.assertEqual(len(messages), 4)
+        actual = [message['data'][key]['value'] for message in messages for key in ('keyword2', 'keyword3')]
+        self.assertEqual(actual[:-1], [checkin.format_wechat_account(item) for item in items])
+        self.assertEqual(actual[-1], '无')
+        self.assertEqual(messages[-1]['data']['keyword1']['value'], '正常 6/7（4/4）')
+        self.assertIn('失败', messages[1]['data']['keyword2']['value'])
+
+    def test_failed_notification_batch_does_not_stop_remaining_batches(self):
+        items = [{'name': str(i), 'points': '1', 'days': '2', 'success': True} for i in range(3)]
+        response = Mock()
+        response.json.return_value = {'errcode': 0}
+        with patch.multiple(checkin, WECHAT_APPID='app', WECHAT_APPSECRET='secret', WECHAT_TEMPLATE_ID='template', WECHAT_OPENID='openid'), patch.object(checkin, 'get_wechat_access_token', return_value='token') as token, patch.object(checkin.requests, 'post', side_effect=[RuntimeError('offline failure'), response]) as post:
+            self.assertFalse(checkin.wechat_push(3, 3, items))
+            self.assertEqual(post.call_count, 2)
+            token.assert_called_once()
+
 
 if __name__ == '__main__':
     unittest.main()

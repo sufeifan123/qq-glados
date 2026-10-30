@@ -330,6 +330,44 @@ def get_wechat_access_token():
     return None
 
 
+def format_wechat_account(item):
+    """只显示备注；固定标识仍保留在 Actions 日志中。"""
+    name = item.get("name") or item.get("id") or item["label"]
+    status = "" if item["success"] else "失败 / "
+    return f"{name}：{status}{item['points']}分 / {item['days']}天"
+
+
+def build_wechat_messages(success_count, total_count, account_results):
+    """每条消息最多两个账号，各占一个字段，不截断账号列表。"""
+    messages = []
+    batch_count = (len(account_results) + 1) // 2
+    for offset in range(0, len(account_results), 2):
+        batch = account_results[offset:offset + 2]
+        summary = f"正常 {success_count}/{total_count}"
+        if batch_count > 1:
+            summary += f"（{offset // 2 + 1}/{batch_count}）"
+        fields = {
+            "first": {"value": "GLaDOS 签到", "color": "#173177"},
+            "keyword1": {
+                "value": summary,
+                "color": "#27ae60" if success_count == total_count else "#e74c3c",
+            },
+            "remark": {"value": "", "color": "#888888"},
+        }
+        for position in range(2):
+            item = batch[position] if position < len(batch) else None
+            fields[f"keyword{position + 2}"] = {
+                "value": format_wechat_account(item) if item else "无",
+                "color": "#1E90FF" if item is None or item["success"] else "#e74c3c",
+            }
+        messages.append({
+            "touser": WECHAT_OPENID,
+            "template_id": WECHAT_TEMPLATE_ID,
+            "data": fields,
+        })
+    return messages
+
+
 def wechat_push(success_count, total_count, account_results):
     if not all([
         WECHAT_APPID,
@@ -340,80 +378,36 @@ def wechat_push(success_count, total_count, account_results):
         log("⚠️ 微信测试号参数未配置完整，跳过微信通知")
         return False
 
-    access_token = get_wechat_access_token()
+    messages = build_wechat_messages(success_count, total_count, account_results)
+    if not messages:
+        return False
 
+    access_token = get_wechat_access_token()
     if not access_token:
         return False
 
-    all_ok = success_count == total_count
+    all_sent = True
+    for index, data in enumerate(messages, 1):
+        try:
+            response = requests.post(
+                "https://api.weixin.qq.com/cgi-bin/message/template/send",
+                params={"access_token": access_token},
+                json=data,
+                timeout=10,
+            )
+            result = response.json()
+            if result.get("errcode") == 0:
+                log(f"✅ 微信测试号通知发送成功（{index}/{len(messages)}）")
+                continue
+            log(
+                f"❌ 微信测试号通知失败（{index}/{len(messages)}）："
+                f"{result.get('errcode')} {result.get('errmsg')}"
+            )
+        except Exception as exc:
+            log(f"❌ 微信测试号通知异常（{index}/{len(messages)}）：{exc}")
+        all_sent = False
 
-    stats = []
-
-    for item in account_results:
-        stats.append(
-            f"{item['label']}："
-            f"{'正常' if item['success'] else '失败'} / "
-            f"{item['points']}积分 / {item['days']}天"
-        )
-
-    stats_text = "；".join(stats)
-
-    # 防止多账号时模板字段过长
-    if len(stats_text) > 180:
-        stats_text = stats_text[:180] + "..."
-
-    title = f"GLaDOS 签到：正常 {success_count}/{total_count}"
-
-    data = {
-        "touser": WECHAT_OPENID,
-        "template_id": WECHAT_TEMPLATE_ID,
-        "data": {
-            "first": {
-                "value": title,
-                "color": "#173177",
-            },
-            "keyword1": {
-                "value": f"正常 {success_count}/{total_count}",
-                "color": "#27ae60" if all_ok else "#e74c3c",
-            },
-            "keyword2": {
-                "value": stats_text,
-                "color": "#1E90FF",
-            },
-            "keyword3": {
-                "value": "全部正常" if all_ok else "存在失败，请查看 Actions",
-                "color": "#333333",
-            },
-            "remark": {
-                "value": "GLaDOS 自动签到通知",
-                "color": "#888888",
-            },
-        },
-    }
-
-    try:
-        response = requests.post(
-            "https://api.weixin.qq.com/cgi-bin/message/template/send",
-            params={"access_token": access_token},
-            json=data,
-            timeout=10,
-        )
-
-        result = response.json()
-
-        if result.get("errcode") == 0:
-            log("✅ 微信测试号通知发送成功")
-            return True
-
-        log(
-            "❌ 微信测试号通知失败："
-            f"{result.get('errcode')} {result.get('errmsg')}"
-        )
-
-    except Exception as exc:
-        log(f"❌ 微信测试号通知异常：{exc}")
-
-    return False
+    return all_sent
 
 
 # ================= GLaDOS =================
@@ -584,6 +578,7 @@ def main():
             "index": index,
             "id": account['id'],
             "label": label,
+            "name": account['name'],
             "points": glados.points,
             "days": glados.left_days,
             "message": message,
@@ -620,4 +615,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-
