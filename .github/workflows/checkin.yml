@@ -30,7 +30,16 @@ jobs:
           GLADOS_COOKIE: ${{ secrets.GLADOS_COOKIE }}
           # 必须与生成 gld:sess 的登录浏览器一致。
           GLADOS_USER_AGENT: ${{ vars.GLADOS_USER_AGENT }}
+          # 独立账号：仅非空 Cookie 会启用；全部为空时继续使用旧 GLADOS_COOKIE。
+          # 新增账号时复制一组映射，并将后缀改为新的固定标识。
+          GLADOS_COOKIE_MAIN: ${{ secrets.GLADOS_COOKIE_MAIN }}
+          GLADOS_NAME_MAIN: ${{ vars.GLADOS_NAME_MAIN || '主账号' }}
+          GLADOS_USER_AGENT_MAIN: ${{ vars.GLADOS_USER_AGENT_MAIN }}
+          GLADOS_COOKIE_BACKUP: ${{ secrets.GLADOS_COOKIE_BACKUP }}
+          GLADOS_NAME_BACKUP: ${{ vars.GLADOS_NAME_BACKUP || '备用账号' }}
+          GLADOS_USER_AGENT_BACKUP: ${{ vars.GLADOS_USER_AGENT_BACKUP }}
           WECHAT_APPID: ${{ secrets.WECHAT_APPID }}
           WECHAT_APPSECRET: ${{ secrets.WECHAT_APPSECRET }}
           WECHAT_TEMPLATE_ID: ${{ secrets.WECHAT_TEMPLATE_ID }}
           WECHAT_OPENID: ${{ secrets.WECHAT_OPENID }}
+

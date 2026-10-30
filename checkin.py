@@ -160,10 +160,11 @@ def get_session_cookie_kind(cookie_header):
     return None
 
 
-def get_browser_headers():
+def get_browser_headers(user_agent=None):
     """构造与生成当前登录会话的浏览器一致的请求头。"""
     user_agent = (
-        os.environ.get("GLADOS_USER_AGENT", "").strip()
+        (user_agent or "").strip()
+        or os.environ.get("GLADOS_USER_AGENT", "").strip()
         or DEFAULT_USER_AGENT
     )
     headers = {"User-Agent": user_agent}
@@ -236,6 +237,50 @@ def get_cookies():
     return accounts
 
 
+def get_accounts():
+    """优先读取独立账号；空映射不启用新模式，保留旧配置兼容。"""
+    prefix = "GLADOS_COOKIE_"
+    account_ids = sorted(
+        key[len(prefix):]
+        for key, value in os.environ.items()
+        if key.startswith(prefix) and value.strip()
+    )
+
+    if not account_ids:
+        return [
+            {"id": f"LEGACY_{index}", "name": f"旧账号{index}",
+             "cookie": cookie, "user_agent": None}
+            for index, cookie in enumerate(get_cookies(), 1)
+        ]
+
+    accounts = []
+    for account_id in account_ids:
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]*", account_id):
+            raise ValueError("独立账号标识必须以大写字母开头，仅包含大写字母、数字和下划线")
+        raw_cookie = os.environ[prefix + account_id].strip()
+        if raw_cookie.startswith("[") or "#" in raw_cookie:
+            raise ValueError(f"账号 [{account_id}] 必须只配置一个完整 Cookie")
+        cookie = normalize_cookie(raw_cookie)
+        if not cookie:
+            raise ValueError(f"账号 [{account_id}] 的 Cookie 配置无法解析")
+        name = os.environ.get(f"GLADOS_NAME_{account_id}", "").strip() or account_id
+        accounts.append({
+            "id": account_id,
+            "name": name,
+            "cookie": cookie,
+            "user_agent": os.environ.get(f"GLADOS_USER_AGENT_{account_id}", ""),
+        })
+
+    log(f"✅ 读取到 {len(accounts)} 个独立 GLaDOS 账号")
+    if os.environ.get("GLADOS_COOKIE", "").strip():
+        log("ℹ️ 已启用独立账号配置，旧 GLADOS_COOKIE 不参与本次签到")
+    return accounts
+
+
+def account_label(account):
+    return f"{account['name']} [{account['id']}]"
+
+
 def is_normal_checkin_result(result):
     """成功签到和已经签到过都视为正常。"""
     if not isinstance(result, dict):
@@ -306,7 +351,8 @@ def wechat_push(success_count, total_count, account_results):
 
     for item in account_results:
         stats.append(
-            f"账号{item['index']}："
+            f"{item['label']}："
+            f"{'正常' if item['success'] else '失败'} / "
             f"{item['points']}积分 / {item['days']}天"
         )
 
@@ -373,8 +419,9 @@ def wechat_push(success_count, total_count, account_results):
 # ================= GLaDOS =================
 
 class GLaDOS:
-    def __init__(self, cookie):
+    def __init__(self, cookie, user_agent=None):
         self.cookie = cookie
+        self.user_agent = user_agent
         self.domain = DOMAINS[0]
         self.email = "Unknown"
         self.left_days = "?"
@@ -390,7 +437,7 @@ class GLaDOS:
         for domain in DOMAINS:
             try:
                 headers = HEADERS.copy()
-                headers.update(get_browser_headers())
+                headers.update(get_browser_headers(self.user_agent))
                 headers["Cookie"] = self.cookie
                 headers["Origin"] = domain
                 headers["Referer"] = f"{domain}/console/checkin"
@@ -478,18 +525,23 @@ class GLaDOS:
 def main():
     log("🚀 GLaDOS Checkin Starting")
 
-    cookies = get_cookies()
+    try:
+        accounts = get_accounts()
+    except ValueError as exc:
+        log(f"❌ {exc}")
+        return 1
 
-    if not cookies:
+    if not accounts:
         return 1
 
     success_count = 0
     account_results = []
 
-    for index, cookie in enumerate(cookies, 1):
-        log(f"========== 账号 {index} ==========")
+    for index, account in enumerate(accounts, 1):
+        label = account_label(account)
+        log(f"========== {label} ==========")
 
-        glados = GLaDOS(cookie)
+        glados = GLaDOS(account['cookie'], account['user_agent'])
 
         result = None
         normal = False
@@ -522,7 +574,7 @@ def main():
             icon = "❌"
 
         log(
-            f"{icon} 用户: {mask_email(glados.email)}"
+            f"{icon} {label} | 用户: {mask_email(glados.email)}"
             f" | 积分: {glados.points}"
             f" | 剩余: {glados.left_days} 天"
             f" | 结果: {message}"
@@ -530,6 +582,8 @@ def main():
 
         account_results.append({
             "index": index,
+            "id": account['id'],
+            "label": label,
             "points": glados.points,
             "days": glados.left_days,
             "message": message,
@@ -538,7 +592,7 @@ def main():
 
     log(
         f"📊 本次结果：正常 "
-        f"{success_count}/{len(cookies)}"
+        f"{success_count}/{len(accounts)}"
     )
 
     log(
@@ -551,12 +605,12 @@ def main():
 
     wechat_push(
         success_count,
-        len(cookies),
+        len(accounts),
         account_results,
     )
 
     # 只要有账号真正签到失败，就让 Actions 显示失败
-    if success_count != len(cookies):
+    if success_count != len(accounts):
         log("❌ 存在签到失败账号")
         return 1
 
@@ -566,3 +620,4 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+

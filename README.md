@@ -1,5 +1,63 @@
 # 🎁 每天+20积分，5分钟搞定 GLaDOS 自动签到
 
+## 独立管理多个账号（当前版本）
+
+每个账号使用独立的 Cookie Secret、固定标识和显示备注，更新一个账号不影响其他账号。
+当前脚本使用微信测试号通知（`WECHAT_APPID`、`WECHAT_APPSECRET`、`WECHAT_TEMPLATE_ID`、`WECHAT_OPENID`）；下方旧版 PushPlus 教程不适用于当前脚本。
+
+### 现有账号如何迁移
+
+- 不添加独立 Cookie Secret 时，原来的 `GLADOS_COOKIE` 继续生效，支持单个 Cookie、JSON 数组或用 `#` 分隔多个 Cookie，不需要重新获取仍然有效的 Cookie。
+- 只要传入了任意非空的 `GLADOS_COOKIE_<标识>`，就启用独立管理，旧 `GLADOS_COOKIE` 不再参与签到，避免重复。
+- 因此首次迁移时，请把旧配置中的两个完整 Cookie 分别复制到 `GLADOS_COOKIE_MAIN` 和 `GLADOS_COOKIE_BACKUP`。每个 Secret 只放一个账号的 Cookie，不要放多账号数组或分隔串。
+- 旧 Secret 可以保留。回退时移除全部独立 Cookie 映射或将它们清空；旧 Cookie 仍有效的情况下即可继续使用。
+- 旧格式按位置显示为“旧账号1 [LEGACY_1]”；迁移后使用固定标识，不受其他账号增删影响。
+
+### 配置位置和命名
+
+进入仓库 **Settings → Secrets and variables → Actions**。Cookie 放在 **Secrets**，备注和 User-Agent 放在 **Variables**，不要把真实 Cookie 写入代码、文档或日志。
+
+| 用途 | 主账号 | 备用账号 | 说明 |
+|------|--------|----------|------|
+| Cookie Secret | `GLADOS_COOKIE_MAIN` | `GLADOS_COOKIE_BACKUP` | 一个完整 Cookie，例如同时包含 `gld:sess` 和 `gld:sess.sig` |
+| 备注 Variable | `GLADOS_NAME_MAIN` | `GLADOS_NAME_BACKUP` | 可选，工作流默认“主账号”和“备用账号” |
+| User-Agent Variable | `GLADOS_USER_AGENT_MAIN` | `GLADOS_USER_AGENT_BACKUP` | 可选，应与获取该账号 Cookie 的登录浏览器一致 |
+
+工作流已预留 MAIN 和 BACKUP 两组映射，未填写的账号不会参与签到。
+User-Agent 读取顺序：账号专属值 → 全局 `GLADOS_USER_AGENT` → 脚本默认值。
+更换登录浏览器重新获取 Cookie 时，请同步更新该账号的 User-Agent。
+
+### 新增账号
+
+例如添加 FAMILY：
+
+1. 新建 Secret `GLADOS_COOKIE_FAMILY`，填入新账号的完整 Cookie。
+2. 可选：新建 Variables `GLADOS_NAME_FAMILY`（例如“家人账号”）、`GLADOS_USER_AGENT_FAMILY`。
+3. 在 `.github/workflows/checkin.yml` 的签到步骤 `env` 下，按相同缩进添加这三行：
+
+```yaml
+          GLADOS_COOKIE_FAMILY: ${{ secrets.GLADOS_COOKIE_FAMILY }}
+          GLADOS_NAME_FAMILY: ${{ vars.GLADOS_NAME_FAMILY || '家人账号' }}
+          GLADOS_USER_AGENT_FAMILY: ${{ vars.GLADOS_USER_AGENT_FAMILY }}
+```
+
+账号配置由这组环境变量定义，不需要再修改 Python 或维护另一份账号列表。
+标识必须以大写字母开头，只能包含大写字母、数字、下划线；三行后缀必须一致。
+GitHub 新建的 Secret 不会自动传给 Python，因此新增其他标识时必须补充工作流映射。
+公开仓库中备注也可能出现在公开 Actions 日志，请使用不含隐私的昵称。
+
+### 更新或删除账号
+
+- **更新 Cookie：**只更新该账号对应的 Secret，不用改代码或工作流，也不用更新其他账号。
+- **更新备注或 User-Agent：**更新该账号对应的 Variable。
+- **删除账号：**移除工作流中该账号的三行映射，并删除对应的 Secret 和两个 Variables。其他账号无需修改。
+- **注意：**删除最后一个独立账号后，脚本会恢复读取旧 `GLADOS_COOKIE`。如果希望停止全部账号，请同时移除旧 Cookie 配置或禁用工作流。
+
+在 Actions 中手动运行工作流验证配置。日志和微信通知使用“备注 [固定标识]”，例如“备用账号 [BACKUP]”；每个账号显示正常或失败、积分和剩余天数。某个账号签到失败后仍继续处理其他账号，最终汇总并将工作流标记为失败。
+账号按标识排序；微信模板内容过长时仍按原逻辑截断，完整结果以 Actions 日志为准。
+
+---
+
 <div align="center">
 
 **你不用写代码 · 不用买服务器 · 不用每天登录**
@@ -545,9 +603,9 @@ GitHub API 要求必须指定分支名。
 <details>
 <summary><b>Q: 支持多个账号吗？</b></summary>
 
-支持！用英文符号 `&` 分隔多个 Cookie：
+支持！推荐使用本文开头的独立账号配置。旧 `GLADOS_COOKIE` 也可用英文符号 `#` 分隔多个 Cookie：
 ```
-cookie1&cookie2&cookie3
+cookie1#cookie2#cookie3
 ```
 
 </details>
@@ -671,3 +729,4 @@ MIT
 **⭐ Star 一下，支持作者持续更新！⭐**
 
 </div>
+
