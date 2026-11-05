@@ -1,65 +1,176 @@
-# 🎁 每天+20积分，5分钟搞定 GLaDOS 自动签到
+# GLaDOS 自动签到
 
-## 独立管理多个账号（当前版本）
+[![GLaDOS Checkin](https://github.com/sufeifan123/qq-glados/actions/workflows/checkin.yml/badge.svg)](https://github.com/sufeifan123/qq-glados/actions/workflows/checkin.yml)
 
-每个账号使用独立的 Cookie Secret、固定标识和显示备注，更新一个账号不影响其他账号。
-当前脚本使用微信测试号通知（`WECHAT_APPID`、`WECHAT_APPSECRET`、`WECHAT_TEMPLATE_ID`、`WECHAT_OPENID`）；下方旧版 PushPlus 教程不适用于当前脚本。
+使用 Python 和 GitHub Actions 为 GLaDOS 账号签到，查询积分、剩余天数，并可通过微信公众平台测试号发送通知。无需自备服务器。
 
-### 现有账号如何迁移
+**本仓库当前使用 cron-job.org，每天北京时间 09:00 触发一次。** 定时设置在 cron-job.org 后台，不在仓库代码中；Fork 项目不会复制外部定时任务，需要自行配置。
 
-- 不添加独立 Cookie Secret 时，原来的 `GLADOS_COOKIE` 继续生效，支持单个 Cookie、JSON 数组或用 `#` 分隔多个 Cookie，不需要重新获取仍然有效的 Cookie。
-- 只要传入了任意非空的 `GLADOS_COOKIE_<标识>`，就启用独立管理，旧 `GLADOS_COOKIE` 不再参与签到，避免重复。
-- 因此首次迁移时，请把旧配置中的两个完整 Cookie 分别复制到 `GLADOS_COOKIE_MAIN` 和 `GLADOS_COOKIE_BACKUP`。每个 Secret 只放一个账号的 Cookie，不要放多账号数组或分隔串。
-- 旧 Secret 可以保留。回退时移除全部独立 Cookie 映射或将它们清空；旧 Cookie 仍有效的情况下即可继续使用。
-- 旧格式按位置显示为“旧账号1 [LEGACY_1]”；迁移后使用固定标识，不受其他账号增删影响。
+> 当前工作流仅配置了 `workflow_dispatch`，支持手动运行和 API 触发，没有内置 `schedule`。请先完成一次手动验证，再设置定时任务。接口、积分规则和登录会话有效期由 GLaDOS 决定，不承诺固定签到奖励或永久有效。
 
-### 配置位置和命名
+## 目录
 
-进入仓库 **Settings → Secrets and variables → Actions**。Cookie 放在 **Secrets**，备注和 User-Agent 放在 **Variables**，不要把真实 Cookie 写入代码、文档或日志。
+- [功能与运行方式](#功能与运行方式)
+- [新手快速部署](#新手快速部署)
+- [配置项一览](#配置项一览)
+- [微信测试号通知](#微信测试号通知)
+- [每天北京时间九点自动触发](#每天北京时间九点自动触发)
+- [多账号管理](#多账号管理)
+- [旧配置迁移](#旧配置迁移)
+- [运行结果与常见问题](#运行结果与常见问题)
+- [本地运行与测试](#本地运行与测试)
+- [项目文件与参考资料](#项目文件与参考资料)
 
-| 用途 | 主账号 | 备用账号 | 说明 |
-|------|--------|----------|------|
-| Cookie Secret | `GLADOS_COOKIE_MAIN` | `GLADOS_COOKIE_BACKUP` | 一个完整 Cookie，例如同时包含 `gld:sess` 和 `gld:sess.sig` |
-| 备注 Variable | `GLADOS_NAME_MAIN` | `GLADOS_NAME_BACKUP` | 可选，工作流默认“主账号”和“备用账号” |
-| User-Agent Variable | `GLADOS_USER_AGENT_MAIN` | `GLADOS_USER_AGENT_BACKUP` | 可选，应与获取该账号 Cookie 的登录浏览器一致 |
+## 功能与运行方式
 
-工作流已预留 MAIN 和 BACKUP 两组映射，未填写的账号不会参与签到。
-User-Agent 读取顺序：账号专属值 → 全局 `GLADOS_USER_AGENT` → 脚本默认值。
-更换登录浏览器重新获取 Cookie 时，请同步更新该账号的 User-Agent。
+| 功能 | 当前实现 |
+| --- | --- |
+| 单账号与多账号 | 每个账号单独保存 Cookie，使用固定标识和可选备注 |
+| 失败重试 | 单个账号首次签到异常后等待 60 秒，再尝试一次 |
+| 账号顺序 | 按固定标识排序，正常处理的签到失败不会阻止后续账号 |
+| 状态查询 | 查询当前积分和剩余天数；未获取到的数据显示 `?` |
+| 域名尝试 | 每次请求依次尝试 cloud、rocks、network，签到 token 随当前域名设置 |
+| 微信通知 | 微信测试号模板消息，每条最多两个账号，更多账号分批发送 |
+| 执行结果 | 全部账号签到正常时退出码为 0；无账号、账号配置错误或存在签到失败时为 1 |
 
-### 新增账号
+域名切换发生在 HTTP 非 200 或请求、JSON 解析异常时；HTTP 200 中的业务失败会直接返回给签到重试逻辑，不保证继续尝试其他域名。
 
-例如添加 FAMILY：
+当前没有实现 PushPlus、每日积分增量计算、兑换操作或兑换差额提示。积分、剩余天数会截去小数部分后展示。
 
-1. 新建 Secret `GLADOS_COOKIE_FAMILY`，填入新账号的完整 Cookie。
-2. 可选：新建 Variables `GLADOS_NAME_FAMILY`（例如“家人账号”）、`GLADOS_USER_AGENT_FAMILY`。
-3. 在 `.github/workflows/checkin.yml` 的签到步骤 `env` 下，按相同缩进添加这三行：
+## 新手快速部署
 
-```yaml
-          GLADOS_COOKIE_FAMILY: ${{ secrets.GLADOS_COOKIE_FAMILY }}
-          GLADOS_NAME_FAMILY: ${{ vars.GLADOS_NAME_FAMILY || '家人账号' }}
-          GLADOS_USER_AGENT_FAMILY: ${{ vars.GLADOS_USER_AGENT_FAMILY }}
+### 第一步：Fork 并启用 Actions
+
+1. 打开 [本仓库](https://github.com/sufeifan123/qq-glados)，点击右上角 **Fork**，创建自己的副本。
+2. 进入自己的仓库，打开 **Actions** 标签页。
+3. 如果出现启用提示，按页面提示启用工作流。
+4. 后续所有 Secrets、Variables 和运行操作，都在自己的仓库完成。
+
+如果你就是本仓库维护者，可以直接配置当前仓库，无需再次 Fork。
+
+几个常用概念：
+
+| 名称 | 含义 |
+| --- | --- |
+| Fork | 在自己的 GitHub 账号下创建仓库副本 |
+| Cookie | 网站的登录凭证，程序用它代表对应账号请求接口 |
+| Secrets | GitHub 存放 Cookie、密钥等敏感配置的位置 |
+| Variables | 存放备注、User-Agent 等普通配置的位置 |
+| Run workflow | 手动启动一次工作流，用于验证配置 |
+| cron-job.org | 按时间表调用 GitHub API，启动签到工作流的外部服务 |
+
+### 第二步：获取 Cookie 和 User-Agent
+
+建议使用电脑上的 Chrome 或 Edge，从实际登录请求中复制，避免手动拼错 Cookie。
+
+1. 打开 [GLaDOS](https://glados.cloud) 并登录自己的账号。
+2. 按 **F12** 打开开发者工具，选择 **Network（网络）**，确保网络录制已开启。
+3. 刷新页面，或进入控制台签到页面并进行一次正常操作。
+4. 找到发往 GLaDOS 的已登录接口请求，例如路径包含 `/api/user/status` 或 `/api/user/checkin` 的请求。
+5. 打开该请求的 **Headers（标头）→ Request Headers（请求标头）**。
+6. 复制 `Cookie` 的完整值，并从同一请求中复制 `User-Agent` 的值，分别暂存。
+
+当前脚本识别的新版签名会话字段为：
+
+```text
+gld:sess=你的会话值; gld:sess.sig=你的签名值
 ```
 
-账号配置由这组环境变量定义，不需要再修改 Python 或维护另一份账号列表。
-标识必须以大写字母开头，只能包含大写字母、数字、下划线；三行后缀必须一致。
-GitHub 新建的 Secret 不会自动传给 Python，因此新增其他标识时必须补充工作流映射。
-公开仓库中备注也可能出现在公开 Actions 日志，请使用不含隐私的昵称。
+上面只是格式示例，不能直接使用。请保留实际请求中的完整值；Cookie 中存在其他字段时可以一起保留。
 
-### 更新或删除账号
+- Cookie 应是请求头字符串，不是 Cookie-Editor 导出的对象数组。
+- 两个会话字段要来自同一次登录，不能混用不同账号或不同会话。
+- 如果手动组合，用分号分隔字段，建议写成上面的格式。
+- 如果只有旧版 `koa:sess` 字段，脚本可以解析，但服务端可能不再接受；遇到“没有权限”时重新登录并获取新版 Cookie。
+- Cookie 和 User-Agent 应来自同一个登录浏览器；重新获取 Cookie 时同步检查 User-Agent。
+- 不要把 Cookie、请求截图中的凭证或完整请求导出文件提交到仓库、Issue 或聊天中。
 
-- **更新 Cookie：**只更新该账号对应的 Secret，不用改代码或工作流，也不用更新其他账号。
-- **更新备注或 User-Agent：**更新该账号对应的 Variable。
-- **删除账号：**移除工作流中该账号的三行映射，并删除对应的 Secret 和两个 Variables。其他账号无需修改。
-- **注意：**删除最后一个独立账号后，脚本会恢复读取旧 `GLADOS_COOKIE`。如果希望停止全部账号，请同时移除旧 Cookie 配置或禁用工作流。
+### 第三步：配置一个账号
 
-在 Actions 中手动运行工作流验证配置。日志使用“备注 [固定标识]”，例如“备用账号 [BACKUP]”；微信通知只显示备注、积分和剩余天数，失败账号另加“失败”标记。某个账号签到失败后仍继续处理其他账号，最终汇总并将工作流标记为失败。
-账号按标识排序；微信每条通知最多两个账号，每个账号单独占一个字段，更多账号自动分批发送，不再截断账号列表。
+当前工作流已经映射 `U156`、`U290` 两组账号。**它们只是配置标识，不要求与你的 GLaDOS 用户编号一致。** 新手可以直接复用，只填一组也能运行。
 
-### 微信测试号紧凑通知模板
+进入自己的仓库 **Settings → Secrets and variables → Actions**。
 
-脚本将总结果放在 `keyword1`，第一、第二个账号分别放在 `keyword2`、`keyword3`。
-请在微信公众平台测试号后台添加如下模板（如支持编辑，也可修改现有模板）：
+在 **Secrets** 标签下，点击 **New repository secret**，添加：
+
+| Name | Secret |
+| --- | --- |
+| `GLADOS_COOKIE_U156` | 第二步复制的一个账号完整 Cookie |
+
+在 **Variables** 标签下，点击 **New repository variable**，添加：
+
+| Name | Value |
+| --- | --- |
+| `GLADOS_USER_AGENT` | 第二步同一请求中的 User-Agent |
+| `GLADOS_NAME_U156` | 可选，例如“主账号”；不填时工作流默认“账号156” |
+
+只有一个账号时，不用添加 `GLADOS_COOKIE_U290`。两个账号都使用同一浏览器 User-Agent 时，可以共用全局值；不同浏览器的配置方法见[多账号管理](#多账号管理)。
+
+> Secret/Variable 名称必须与工作流映射一致。仅新建 `GLADOS_COOKIE`、`GLADOS_COOKIE_MAIN` 或其他未映射名称，不会自动传给当前工作流。
+
+### 第四步：手动验证
+
+1. 打开自己的仓库 **Actions → GLaDOS Checkin**。
+2. 点击 **Run workflow**，选择 `main` 分支，再点击运行按钮。
+3. 打开新出现的运行记录，展开 **Run GLaDOS Checkin** 步骤查看日志。
+4. 确认读取到了预期账号，并出现“全部账号处理正常”。
+
+示例日志如下，数值仅用于说明：
+
+```text
+✅ 主账号 [U156] | 用户: u***@example.com | 积分: 169 | 剩余: 266 天 | 结果: Checkin Repeats! Please Try Tomorrow
+📊 本次结果：正常 1/1
+```
+
+“已经签到”也按正常结果处理，不代表每次运行都会新增积分。未配置微信时，出现“微信测试号参数未配置完整，跳过微信通知”是预期行为，不影响签到。
+
+确认手动运行正常后，再按下面的教程配置微信和定时触发。
+
+## 配置项一览
+
+### 当前工作流已经映射的配置
+
+| 名称 | 存放位置 | 是否需要 | 说明 |
+| --- | --- | --- | --- |
+| `GLADOS_COOKIE_U156` | Secrets | 两组 Cookie 至少填一组 | 一个账号的完整 Cookie |
+| `GLADOS_COOKIE_U290` | Secrets | 可选第二账号 | 另一个账号的完整 Cookie |
+| `GLADOS_NAME_U156` | Variables | 可选 | 默认“账号156” |
+| `GLADOS_NAME_U290` | Variables | 可选 | 默认“账号290” |
+| `GLADOS_USER_AGENT` | Variables | 建议配置 | 全局 User-Agent，来自登录浏览器 |
+| `WECHAT_APPID` | Secrets | 微信通知四项须全部填写 | 微信测试号 AppID |
+| `WECHAT_APPSECRET` | Secrets | 同上 | 同一测试号的 AppSecret |
+| `WECHAT_TEMPLATE_ID` | Secrets | 同上 | 该测试号下的通知模板 ID |
+| `WECHAT_OPENID` | Secrets | 同上 | 接收人在该测试号下的 OpenID |
+
+User-Agent 未配置时，脚本使用内置 Windows Chrome 120 字符串；这不保证与当前登录会话匹配，建议填入实际值。
+
+### 脚本支持、但当前工作流没有映射的配置
+
+| 名称 | 用途 | 使用前需要做什么 |
+| --- | --- | --- |
+| `GLADOS_COOKIE` | 旧版单账号或多账号配置 | 在签到步骤的 `env` 中添加 Secret 映射 |
+| `GLADOS_COOKIE_<标识>` | 其他独立账号 | 添加对应的 Secret 和工作流映射 |
+| `GLADOS_NAME_<标识>` | 其他账号的备注 | 添加对应 Variable 和工作流映射 |
+| `GLADOS_USER_AGENT_<标识>` | 账号专属 User-Agent | 添加对应 Variable 和工作流映射 |
+
+优先级为：**账号专属 User-Agent → 全局 User-Agent → 脚本默认值**。
+
+## 微信测试号通知
+
+微信通知是可选功能。当前程序使用微信公众平台测试号，不使用 PushPlus。
+
+### 1. 获取测试号信息和接收人 OpenID
+
+1. 在电脑上打开 [微信公众平台接口测试号](https://mp.weixin.qq.com/debug/cgi-bin/sandbox?t=sandbox/login)，按页面提示使用微信登录。
+2. 在测试号信息区域找到 `appID` 和 `appsecret`。
+3. 找到测试号二维码，用接收通知的微信扫码关注该测试号。
+4. 在测试号用户列表中，找到接收人的标识，复制其 OpenID。
+
+这里的 OpenID 是接收人在**这个测试号下**的标识，不是微信昵称、微信号或手机号。当前脚本每批消息发送给一个 `WECHAT_OPENID`，不要填多个值或列表。
+
+### 2. 新建通知模板
+
+在测试号后台找到模板消息相关区域，新增测试模板。标题可填“GLaDOS 签到”，内容复制为：
 
 ```text
 签到结果：{{keyword1.DATA}}
@@ -67,696 +178,312 @@ GitHub 新建的 Secret 不会自动传给 Python，因此新增其他标识时�
 {{keyword3.DATA}}
 ```
 
-新建后将仓库 Secret `WECHAT_TEMPLATE_ID` 更新为新模板 ID，再手动运行 Actions。
-旧模板中的“执行时间”对应 `keyword2`，不能继续用它表示时间。
-若复用旧模板，`keyword3` 也会变为第二个账号详情，必须同步调整字段标题。
+保存后复制模板 ID。模板字段必须与上面一致，不要把 `keyword2` 写成“执行时间”，它对应第一个账号详情。
 
-示例（账号备注分别配置为“156”“290”时）：
+### 3. 添加四个 Secrets
+
+回到仓库 **Settings → Secrets and variables → Actions → Secrets**，添加：
+
+- `WECHAT_APPID`
+- `WECHAT_APPSECRET`
+- `WECHAT_TEMPLATE_ID`
+- `WECHAT_OPENID`
+
+四项应来自同一测试号的配置。全部填好后，手动运行一次，检查日志中的“微信测试号通知发送成功”。
+
+### 4. 通知格式
+
+两个账号的示例：
 
 ```text
 签到结果：正常 2/2
-156：169分 / 266天
-290：191分 / 278天
+主账号：169分 / 266天
+备用账号：191分 / 278天
 ```
 
-可在 Variables 中设置简短的 `GLADOS_NAME_U156`、`GLADOS_NAME_U290`，并确保工作流已映射它们；未修改则继续显示原备注，例如“账号156”。
-失败账号显示“156：失败 / ?分 / ?天”；只有一个账号时，第二个字段显示“无”。
-三个及以上账号按每条两个分批发送，总结果后附分批序号，例如“正常 3/3（1/2）”。
-分批后某条发送失败仍会尝试其余消息，并在日志记录失败。
+- 每个账号独占一个字段；只有一个账号时，另一个字段显示“无”。
+- 失败账号添加“失败”标记，例如 `主账号：失败 / ?分 / ?天`；已查询到的数据仍会保留。
+- 三个及以上账号每两个一批，例如 `正常 3/3（1/2）` 和 `正常 3/3（2/2）`。
+- 某一批发送失败后，仍会尝试发送剩余批次。
+- 通知主要显示备注、积分和天数；固定标识及签到结果消息见 Actions 日志。
+- 建议使用简短且不含隐私的备注；微信客户端的卡片显示效果可能不同。
 
-脚本没有微信模板管理权限，需要在微信后台手动完成模板设置。
-短格式减少卡片截断的可能，但最终展示取决于微信客户端和备注长度；完整固定标识和接口响应继续保留在 Actions 日志。
+**注意：微信发送失败不会单独让当前工作流变红。** Actions 成功只表示脚本的签到判断正常，通知是否送达还要查看微信发送日志。
 
----
+## 每天北京时间九点自动触发
 
-<div align="center">
+本仓库维护者使用 cron-job.org，每天 **09:00（Asia/Shanghai，北京时间）** 调用 GitHub API。新部署用户需要在自己的 cron-job.org 账号中单独创建任务。
 
-**你不用写代码 · 不用买服务器 · 不用每天登录**
+### 1. 创建 GitHub 访问令牌
 
-**一次配置，永久自动，每天 9:30 / 21:30 签到**
+1. 打开 GitHub **Settings → Developer settings → Personal access tokens → Fine-grained tokens**，也可以进入 [令牌设置页](https://github.com/settings/personal-access-tokens)。
+2. 新建细粒度令牌，设置便于辨认的名称，例如 `glados-cron`，并选择合适的有效期。
+3. **Resource owner** 选择目标仓库所属账号。
+4. **Repository access** 选择 **Only select repositories**，只选择你用于签到的仓库。
+5. 在 **Repository permissions** 中，为 **Actions** 设置 **Read and write**，其余保持所需的最小权限。
+6. 生成并复制令牌，妥善保存。如果目标账号要求审批，先确认令牌已获批准。
 
----
+这个令牌用于让 cron-job.org 触发你的工作流，不是 GLaDOS Cookie，也不是微信 AppSecret。到期或撤销后，需要在 cron-job.org 中更新。
 
-### ✨ 为什么选择本项目？
+权限依据见 [GitHub 工作流触发 API 文档](https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event)。旧教程中仅勾选 classic token 的 `workflow` 权限，不应作为本教程的配置方法。
 
-| 优势 | 说明 |
-|------|------|
-| ✅ **2026年验证可用** | 经过实测，确认在2026年1月正常工作 |
-| ✅ **绝对可用** | 修复了其他脚本失效的问题（token更新为glados.cloud） |
-| ✅ **新手友好** | 全程图解，不会也能照着做 |
-| ✅ **作者持续维护** | 遇到问题提Issue，作者很乐意帮忙 |
+### 2. 创建 cron-job.org 任务
 
----
+登录 [cron-job.org](https://cron-job.org)，新建 Cronjob，按以下内容配置。界面字段名称以服务当前页面为准。
 
-### 📱 签到成功预览
+| 项目 | 设置 |
+| --- | --- |
+| Title | `GLaDOS 每日签到` |
+| URL | 下方与你的仓库对应的 dispatch 地址 |
+| 执行时间 | 每天 09:00 |
+| Time zone | `Asia/Shanghai` |
+| Request method | `POST` |
+| Request body | 下方 JSON，使用 Raw Body |
+| 任务状态 | 启用 |
 
-![签到成功示例](images/success.jpg)
+本仓库地址：
 
-> **每天签到能获得 +12 ~ +20 积分，累积可兑换会员时长！**
-
----
-
-### 🚀 3步搞定，永久自动签到
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                                                             │
-│   ① Fork 项目    ──→  点一下右上角 Fork 按钮                 │
-│                                                             │
-│   ② 配置 Cookie  ──→  浏览器复制一下，贴到 GitHub Secrets    │
-│                                                             │
-│   ③ 配置 cron    ──→  5分钟填好，永久有效                    │
-│                                                             │
-│   ✅ 完成！每天自动签到 + 微信通知                            │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
+```text
+https://api.github.com/repos/sufeifan123/qq-glados/actions/workflows/checkin.yml/dispatches
 ```
 
-**[👉 点击开始配置](#-快速部署3步搞定-)**
+如果你使用 Fork，必须替换为自己的所有者和仓库名：
 
----
-
-[![Auto Checkin](https://github.com/lankerr/2026-glados-checkin/actions/workflows/checkin.yml/badge.svg)](https://github.com/lankerr/2026-glados-checkin/actions)
-[![GitHub Stars](https://img.shields.io/github/stars/lankerr/2026-glados-checkin?style=social)](https://github.com/lankerr/2026-glados-checkin)
-
-**⭐ 觉得有用？点个 Star 支持一下！**
-
-</div>
-
----
-
-## 💡 重要说明
-
-> 为了确保定时签到稳定运行，推荐使用 **cron-job.org**（免费服务）来触发签到。
->
-> GitHub Actions 的自带定时功能对新仓库不太稳定，可能不会自动触发。
->
-> **别担心！** 配置 cron-job.org 只需要额外 5 分钟，一次搞定永久有效。
->
-> [👉 跳转查看 cron-job.org 配置教程](#-推荐方案-cron-joborg-配置定时)
-
----
-
-## 🔥 为什么你需要这个？
-
-> **⚠️ 重要：如果你使用其他签到脚本失败，显示 "please checkin via https://glados.cloud"，请使用本项目！**
-
-GLaDOS 在 2026 年初进行了 API 更新，**绝大多数旧签到脚本已失效**。我们通过抓包分析发现了问题：
-
-| 问题 | 旧脚本 | 本项目（已修复） |
-|------|--------|------------------|
-| 签到 Token | `glados.one` ❌ | `glados.cloud` ✅ |
-| 域名支持 | rocks/network ❌ | cloud ✅ |
-| 签到结果 | "please checkin via..." | "Checkin!" 或 "Repeats" ✅ |
-
-<details>
-<summary><b>🔬 技术细节：我们是怎样修复问题的（感兴趣的看）</b></summary>
-
-### 🔬 我们的探索过程
-
-#### 问题现象
-- GitHub Actions 可以正常运行
-- 推送消息显示 "成功0/1"
-- 签到结果始终为 "please checkin via https://glados.cloud"
-- 手动点击签到按钮正常，但机器人签到无效
-
-#### 排查步骤
-
-1️⃣ **浏览器抓包分析**
-- 使用 Chrome DevTools 抓取真实签到请求
-- 对比浏览器请求和 Python 脚本请求的差异
-
-2️⃣ **尝试的方案（失败）**
-- ❌ 添加更多 Headers（sec-ch-ua、sec-fetch-* 等）
-- ❌ 使用 requests.Session 保持会话
-- ❌ 使用 curl_cffi 模拟浏览器 TLS 指纹
-- ❌ 添加代理配置
-
-3️⃣ **最终发现**
-通过对比不同 token 值的请求结果：
-```python
-# 失败 ❌
-{'token': 'glados.one'}  → "please checkin via https://glados.cloud"
-
-# 成功 ✅  
-{'token': 'glados.cloud'} → "Checkin Repeats! Please Try Tomorrow"
+```text
+https://api.github.com/repos/OWNER/REPO/actions/workflows/checkin.yml/dispatches
 ```
 
-**问题根源**：GLaDOS 更新了 API，签到 token 必须从 `glados.one` 改为 `glados.cloud`！
+例如 Fork 后改了仓库名，URL 中的 `REPO` 也要跟着修改，不要继续请求本仓库。
 
-</details>
-
----
-
-> **📢 重要提示**  
-> - GLaDOS 官网已迁移至 **glados.cloud**（不再是 glados.rocks）
-> - 本项目专为 2026 积分制度优化，每天自动签到两次
-> - 完全免费，使用 GitHub Actions，无需自己的服务器
-> - 不会的话可以提 Issue，作者很乐意帮助技术新手！
-
----
-
-## ✨ 功能特点
-
-| 功能 | 说明 |
-|------|------|
-| 🎯 **精准积分** | 获取真实积分数据 + 每日变化量 |
-| 🎁 **兑换提示** | 显示当前可兑换选项及差额 |
-| ⏰ **每日两次** | 早上 9:30 + 晚上 21:30 自动签到 |
-| 🔄 **失败重试** | 首次失败自动重试一次 |
-| 📱 **微信推送** | PushPlus 漂亮 HTML 报告 |
-| ☁️ **2026 API** | 适配最新 glados.cloud API |
-| 🔧 **持续维护** | 发现问题及时修复 |
-
----
-
-<details>
-<summary><b>📚 给小白的科普：什么是 Fork、Cookie、Secrets？（新手必看）</b></summary>
-
-> 💡 如果你已经熟悉这些概念，可以跳过这部分直接看 [快速部署](#-快速部署3步搞定-)
-
-<details>
-<summary><b>🍴 什么是 Fork？</b></summary>
-
-**Fork** = 把别人的项目复制一份到你自己的账号下。
-
-就像复印一份文档，原件还在别人那里，你有一份自己的副本可以随便改。Fork 之后这个项目就属于你了，你可以自己配置和使用。
-
-</details>
-
-<details>
-<summary><b>🍪 什么是 Cookie？</b></summary>
-
-**Cookie** = 网站记住你是谁的"通行证"。
-
-当你登录 GLaDOS 后，网站会给你的浏览器一个"通行证"（Cookie），下次访问时浏览器出示这个通行证，网站就知道你是谁了。
-
-我们需要把这个通行证告诉签到程序，这样程序就能"假装"是你去签到。
-
-</details>
-
-<details>
-<summary><b>🔐 什么是 Secrets？</b></summary>
-
-**Secrets** = 保险箱，用来存放敏感信息。
-
-你的 Cookie 和 Token 都是隐私信息，不能直接写在代码里（否则别人都能看到）。GitHub Secrets 就像一个保险箱，把这些敏感信息锁起来，只有你的程序运行时才能访问。
-
-</details>
-
-<details>
-<summary><b>⚙️ 什么是 GitHub Actions？</b></summary>
-
-**GitHub Actions** = 免费的自动化机器人。
-
-它可以按照你设定的时间表（比如每天 9:30）自动运行程序。你不需要自己的服务器，GitHub 会免费帮你跑代码。
-
-</details>
-
-<details>
-<summary><b>▶️ 什么是 Run workflow？</b></summary>
-
-**Run workflow** = 手动测试按钮。
-
-| 按钮 | 作用 |
-|------|------|
-| **Run workflow** | 立即执行一次（不管现在几点），用于测试配置是否正确 |
-| **定时任务** | 每天 9:30 和 21:30 自动执行，不需要手动操作 |
-
-简单说：点 Run workflow 是**测试**，以后会**自动运行**。
-
-</details>
-
-</details>
-
----
-
-## ⭐ 推荐方案：cron-job.org 配置定时
-
-由于 GitHub Actions 对新仓库的定时任务有限制（[详见说明](#-为什么-github-actions-定时不可靠)），我们推荐使用 **cron-job.org** 这项免费服务来触发签到。
-
-### 配置步骤（5分钟搞定）
-
-#### 第一步：获取 GitHub Personal Access Token
-
-1. 访问 [https://github.com/settings/tokens](https://github.com/settings/tokens)
-2. 点击 **Generate new token** → **Generate new token (classic)**
-3. 按下图配置：
-
-![GitHub Token 设置](images/github_access_tokens.png)
-
-| 选项 | 值 |
-|------|-----|
-| **Name** | `glados-cron`（任意名称） |
-| **Expiration** | 选择 90 天或更久 |
-| **勾选权限** | ✅ **workflow**（在 repo 下方） |
-
-4. 点击底部 **Generate token**
-5. **立即复制生成的 token**（格式类似 `ghp_1234567890abcdef...`，只显示一次！）
-
-> 💡 Token 示例：`ghp_NXLTUqT51BFfilsaZNlaVstacNnkZc4PYCNa`
-
-#### 第二步：注册 cron-job.org
-
-1. 访问 [https://cron-job.org](https://cron-job.org) 注册账号（免费）
-2. 注册后登录，点击 **Create Cronjob** 创建任务
-
-#### 第三步：创建早签到任务（9:30）
-
-![创建 Cron 任务](images/create_corn_job.png)
-
-按照以下配置填写：
-
-**基本信息**：
-
-| 选项 | 填写 |
-|------|------|
-| **Title** | `GLaDOS 早签到` |
-| **URL** | `https://api.github.com/repos/你的用户名/2026-glados-checkin/actions/workflows/checkin.yml/dispatches` |
-
-> ⚠️ **重要**：把 `你的用户名` 改成你的 GitHub 用户名！比如 `lankerr`
-
-**执行时间**：选择每天 **09:30**（Asia/Shanghai 时区）
-
-**高级配置**（点击 Advanced 展开）：
-
-![高级配置](images/cron_advanced.png)
-
-| 选项 | 值 |
-|------|-----|
-| **Request method** | POST |
-| **Time zone** | Asia/Shanghai |
-
-**请求头（Headers）**：点击 "+ 添加" 添加三行：
+添加以下请求头：
 
 | Key | Value |
-|-----|-------|
-| `Accept` | `application/vnd.github.v3+json` |
-| `Authorization` | `token 你复制的GitHub_Token` |
+| --- | --- |
+| `Accept` | `application/vnd.github+json` |
+| `Authorization` | `Bearer YOUR_GITHUB_TOKEN` |
 | `Content-Type` | `application/json` |
+| `X-GitHub-Api-Version` | `2022-11-28` |
 
-> ⚠️ **注意**：Authorization 的值是 `token ` + **空格** + 你的 Token，例如：`token ghp_NXLTUqT51BFfilsaZNlaVstacNnkZc4PYCNa`
+把 `YOUR_GITHUB_TOKEN` 换成你刚生成的令牌。`Bearer` 后有一个空格，令牌本身不要加入空格、换行或引号。令牌只填入受保护的任务配置，不要公开分享请求头截图。
 
-**请求体（Request body）**：选择 Raw Body，填入：
+请求体：
+
 ```json
-{"ref": "main"}
+{"ref":"main"}
 ```
 
-![常用配置预览](images/cron_common.png)
+`ref` 指定运行分支；按本教程使用 `main`。保存前检查时间为 **每天 09:00**、时区为 **Asia/Shanghai**，只需一个每日任务。
 
-配置完成后点击 **Save** 保存。
+### 3. 测试与验收
 
-#### 第四步：创建晚签到任务（21:30）
+1. 在 cron-job.org 中手动测试一次。
+2. 检查 HTTP 响应；上述配置通常返回 `204 No Content`。API 版本或响应选项不同也可能返回带运行信息的成功响应。
+3. 打开自己仓库的 **Actions**，确认出现新的 **GLaDOS Checkin** 运行记录。
+4. 等待完成，检查签到日志以及可选的微信通知。
+5. 次日检查 cron-job.org 执行历史与 Actions 记录，确认定时触发正常。
 
-复制早签到任务，创建第二个任务：
-- Title 改为 `GLaDOS 晚签到`
-- 执行时间改为 **21:30**
-- 其他配置完全相同
+**HTTP 成功仅说明触发请求被接受，不代表签到完成。** 真正的签到结果以 Actions 日志为准；排队和网络情况也可能让实际执行晚于 09:00。
 
-#### 第五步：测试验证
+### 4. 外部触发故障排查
 
-1. 在任务列表点击 **Test run** 测试
-2. 成功会显示 **204 No Content** ✅
+| 现象 | 优先检查 |
+| --- | --- |
+| 401 | 令牌是否过期、撤销或复制错误；Authorization 是否有正确前缀 |
+| 403 | 令牌是否具有目标仓库的 Actions 写权限；是否存在审批或组织策略限制 |
+| 404 | OWNER、REPO、工作流文件名是否正确；令牌是否获准访问目标仓库 |
+| 422 | JSON 是否有效；是否填写存在的 `ref`；工作流是否支持 `workflow_dispatch` |
+| 触发成功但签到失败 | 打开对应 Actions 运行记录，排查 Cookie 和签到结果 |
+| 没有按时触发 | 检查任务是否启用、时区与每日时间、外部执行历史及令牌有效期 |
 
-![测试成功](images/cron_success.png)
+当前没有 GitHub 内置定时配置，也没有 `keep-alive.yml`。仅 Fork、提交文件或手动运行，不会自动创建每日任务。未来若自行增加 `schedule`，请避免与外部触发重复运行，并参考 [GitHub 触发事件文档](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)。
 
-3. 到 GitHub 仓库的 **Actions** 页面查看，应该有新的运行记录
+## 多账号管理
 
----
+### 使用预留的第二账号
 
-### 🚨 常见陷阱与错误
+添加 Secret `GLADOS_COOKIE_U290`，填第二个账号的完整 Cookie；可选添加 Variable `GLADOS_NAME_U290`。无需修改 Python 或工作流。
 
-| 错误 | 现象 | 原因 | 解决方法 |
-|------|------|------|---------|
-| **401 Unauthorized** | 认证失败 | Authorization 格式错误 | 必须是 `token ghp_xxx`，注意 `token ` 后有空格 |
-| **422 Unprocessable Entity** | 请求无法处理 | Body 缺少 ref 参数 | 改为 `{"ref": "main"}` |
-| Accept 被截断 | 配置错误 | 输入框显示不全 | 完整值：`application/vnd.github.v3+json` |
-| Token 有空格 | 认证失败 | Token 被意外截断 | Token 是连续字符串，中间不能有空格 |
-| 权限不足 | 403 错误 | Token 无 workflow 权限 | 重新生成 Token，勾选 workflow 权限 |
+每个 Secret 只放一个账号。不要把两个 Cookie 放在同一个独立账号 Secret 中，也不要在其中使用多账号 JSON 数组或 `#` 分隔串。
 
-> 💡 **小贴士**：遇到 401/422 错误时，先检查上面三行 Headers 是否完全正确！
+### 为不同账号设置专属 User-Agent
 
----
+脚本支持账号专属 User-Agent，但当前工作流还没有映射。需要使用时，在自己仓库的 [.github/workflows/checkin.yml](.github/workflows/checkin.yml) 中，找到 **Run GLaDOS Checkin → env**，按现有缩进加入：
 
-## 🚀 快速部署（3步搞定）
-
-### 第一步：Fork 本仓库
-
-点击页面右上角的 **Fork** 按钮，将项目复制到你的账号下。
-
----
-
-### 第二步：获取 Cookie 🍪
-
-> ⚠️ **注意**：GLaDOS 官网已迁移到 **https://glados.cloud**，请使用新域名！
-
-#### 2.1 安装 Cookie 扩展
-
-在 **Edge 浏览器** 的扩展商店搜索 `cookie`，安装 **Cookie-Editor** 或类似的 Cookie 管理扩展：
-
-![Cookie-Editor 扩展](images/cookie-extension.png)
-
-> 💡 **提示**：以下任意一个扩展都可以使用，只要能显示 `koa:sess` 和 `koa:sess.sig` 这两个 Cookie 就行！
-
-![可选的 Cookie 扩展](images/cookie-alternative.png)
-
-#### 2.2 登录 GLaDOS 并获取 Cookie
-
-1. 打开 [https://glados.cloud](https://glados.cloud) 并登录
-2. 进入 **签到页面**（Console → Checkin）
-3. 点击浏览器右上角的 **Cookie-Editor** 扩展图标
-4. 找到并复制这两个值：
-   - `koa:sess` → 一串很长的字符串
-   - `koa:sess.sig` → 一串较短的字符串
-
-![获取 Cookie](images/glados-cookies.png)
-
-#### 2.3 组合 Cookie（重要！）
-
-将两个值按以下格式组合，**注意格式必须完全正确**：
-
-```
-koa:sess=你的长字符串; koa:sess.sig=你的短字符串
+```yaml
+          GLADOS_USER_AGENT_U156: ${{ vars.GLADOS_USER_AGENT_U156 }}
+          GLADOS_USER_AGENT_U290: ${{ vars.GLADOS_USER_AGENT_U290 }}
 ```
 
-**正确示例**：
-```
-koa:sess=eyJ1c2VySWQiOjEyMzQ1Njc4OTB9; koa:sess.sig=abcdef123456
-```
+然后在 GitHub **Variables** 中添加对应值。只为需要的账号加一行也可以；为空时继续使用全局 User-Agent。
 
-**常见错误**：
-- ❌ 缺少分号 `;`
-- ❌ 缺少空格（分号后需要一个空格）
-- ❌ 值两边多了引号
-- ❌ 复制了多余的空格或换行
+这是可选的使用教程，不代表当前仓库已经包含这些映射。
 
-#### 2.4 验证你的 Cookie 格式
+### 新增第三个或更多账号
 
-运行以下 Python 代码验证格式是否正确：
+例如使用标识 `FAMILY`：
 
-```python
-# 将你的 Cookie 粘贴到下面的引号中
-cookie = "koa:sess=你的长字符串; koa:sess.sig=你的短字符串"
+1. 新建 Secret `GLADOS_COOKIE_FAMILY`，填写一个账号的完整 Cookie。
+2. 可选新建 Variables：`GLADOS_NAME_FAMILY`、`GLADOS_USER_AGENT_FAMILY`。
+3. 在自己仓库工作流的签到步骤 `env` 下添加：
 
-# 验证
-if "koa:sess=" in cookie and "koa:sess.sig=" in cookie and "; " in cookie:
-    parts = cookie.split("; ")
-    if len(parts) == 2 and parts[0].startswith("koa:sess=") and parts[1].startswith("koa:sess.sig="):
-        print("✅ Cookie 格式正确！")
-    else:
-        print("❌ 格式错误，请检查分号和空格")
-else:
-    print("❌ Cookie 缺少必要的字段")
+```yaml
+          GLADOS_COOKIE_FAMILY: ${{ secrets.GLADOS_COOKIE_FAMILY }}
+          GLADOS_NAME_FAMILY: ${{ vars.GLADOS_NAME_FAMILY || '家人账号' }}
+          GLADOS_USER_AGENT_FAMILY: ${{ vars.GLADOS_USER_AGENT_FAMILY }}
 ```
 
----
+4. 保存工作流，再手动运行验证。
 
-### 第三步：配置 GitHub Secrets 🔐
+固定标识必须以大写字母开头，只包含大写字母、数字和下划线；三行的后缀必须一致。不需要另外维护 Python 账号列表。
 
-1. 进入你 Fork 的仓库
-2. 点击 **Settings**（设置）
-3. 左侧菜单找到 **Secrets and variables** → **Actions**
-4. 点击右上角 **New repository secret**
+### 更新、删除与停止
 
-![添加 Secret](images/add-secret.png)
+- **更新 Cookie：**只修改该账号对应的 Secret；必要时同步更新 User-Agent。
+- **更新备注：**修改对应 Variable。公开 Actions 日志会显示备注，请使用不含隐私的昵称。
+- **停用单个账号：**删除对应 Cookie Secret，映射得到空值后，该账号不会参与签到；也可移除对应工作流映射。
+- **清理账号配置：**移除该账号的 Cookie、备注及专属 User-Agent 映射，并删除不再使用的 Secrets/Variables。
+- **暂停全部自动签到：**停用 cron-job.org 任务；也可在 GitHub Actions 中禁用该工作流。已经启动的任务需要另行取消。
 
-添加以下两个 Secret：
+账号按标识排序，因此 `U156` 在 `U290` 前处理，和 YAML 中的排列顺序无关。新增账号可能改变显示顺序，但不会改变其他账号的固定标识。
 
-| Name | Value | 必需 |
-|------|-------|------|
-| `GLADOS_COOKIE` | 第二步组合的 Cookie | ✅ 是 |
-| `PUSHPLUS_TOKEN` | 微信推送 Token（见下方） | ❌ 否 |
+## 旧配置迁移
 
----
+### 从 GLADOS_COOKIE 迁移
 
-### 第四步：获取 PushPlus Token（可选）📱
+旧版单个 `GLADOS_COOKIE` 可以在 Python 中表示单账号、JSON 数组或用 `#` 分隔的多个账号，但**当前工作流没有将它传入程序**。
 
-如果你希望签到后收到**微信通知**，请配置 PushPlus：
+推荐迁移到独立账号：
 
-1. 访问 [https://www.pushplus.plus](https://www.pushplus.plus)
-2. 点击右上角 **登录**，使用微信扫码登录
+1. 从旧配置中取出每个账号的完整 Cookie。
+2. 分别存入 `GLADOS_COOKIE_U156` 和 `GLADOS_COOKIE_U290`，更多账号按上文增加映射。
+3. 配置备注及 User-Agent，再手动验证。
+4. 确认正常后再清理不需要的旧 Secret。
 
-![PushPlus 扫码登录](images/pushplus-checkin.png)
+如果确实需要使用旧格式，在自己的工作流签到步骤 `env` 下补上：
 
-3. 登录后点击 **发送消息** → **一对一消息**
-4. 复制页面上显示的 **Token**（类似 `05c3****dd36` 的字符串）
-
-![获取 Token](images/pushplus-token.png)
-
-5. 将 Token 添加到 GitHub Secrets，Name 填 `PUSHPLUS_TOKEN`
-
----
-
-### 第五步：启用 Actions ⚡
-
-1. 进入你 Fork 仓库的 **Actions** 标签页
-2. 如果看到黄色提示，点击 **I understand my workflows, go ahead and enable them**
-3. 点击左侧的 **GLaDOS 2026 Checkin**
-4. 点击右侧 **Run workflow** 按钮手动测试一次
-
-![启用 Actions](images/workflow.png)
-
-**🎉 完成！** 以后每天 9:30 和 21:30 会自动签到。
-
----
-
-## 📊 推送效果预览
-
-签到成功后，你会在微信收到类似这样的推送：
-
-```
-👤 your@email.com
-
-当前积分: 46 (+20)
-剩余天数: 353 天
-签到结果: Bindweed! Bindweed!
-
-🎁 兑换选项:
-❌ 100分→10天 (差54分)
-❌ 200分→30天 (差154分)
-❌ 500分→100天 (差454分)
+```yaml
+          GLADOS_COOKIE: ${{ secrets.GLADOS_COOKIE }}
 ```
 
----
+此时脚本的规则为：
 
-## ⏰ 自动运行时间
+- 存在任意非空 `GLADOS_COOKIE_<标识>` 环境变量：仅使用独立账号，忽略旧 `GLADOS_COOKIE`。
+- 所有独立账号为空：读取已映射的旧 `GLADOS_COOKIE`，按位置显示为“旧账号1 [LEGACY_1]”等。
+- 删除最后一个独立账号后，只有旧变量**已映射且非空**才会回退；否则无账号可运行。
+- 独立账号配置非法时会报错退出，不会自动回退到旧账号。
 
-| 时间（北京时间） | 说明 |
-|------------------|------|
-| **09:30** | 早间签到 |
-| **21:30** | 晚间签到 |
+### 从 MAIN、BACKUP 或旧微信模板迁移
 
-> 💡 **重要**：请使用 [cron-job.org](#-推荐方案-cron-joborg-配置定时) 配置定时任务。GitHub Actions 的 schedule 功能对新仓库不可靠，可能不会自动触发！
+- 如果以前按旧 README 新建了 `GLADOS_COOKIE_MAIN`、`GLADOS_COOKIE_BACKUP`，可把 Cookie 迁入当前预留的 U156/U290，或自行补齐 MAIN/BACKUP 的工作流映射。
+- 仍然有效的 Cookie 不需要为了改标识而重新获取；失效或缺少新版会话字段时再重新登录。
+- 当前不读取 `PUSHPLUS_TOKEN`，通知请改为四个微信测试号 Secrets。
+- 旧微信模板如果把 `keyword2` 当作执行时间，需要改用本文模板；新建模板后同时更新 `WECHAT_TEMPLATE_ID`。
 
----
+## 运行结果与常见问题
 
-## ❓ 常见问题
+### Actions 绿色或红色分别代表什么？
 
-<details>
-<summary><b>Q: 为什么推荐 cron-job.org 而不是直接用 GitHub Actions 定时？</b></summary>
+| 结果 | 当前含义 |
+| --- | --- |
+| 绿色 | 脚本判断所有参与账号签到正常，包括重复签到 |
+| 红色 | 可能是账号签到失败、无账号、配置错误，或安装依赖、网络、执行超时等运行问题 |
+| 微信没收到但 Actions 绿色 | 通知缺配置或发送失败不会单独改变脚本退出码 |
+| 积分或天数为 `?` | 该项查询未成功，不能仅据此判定签到失败 |
 
-**GitHub Actions 的定时任务（schedule trigger）对新仓库有严格限制**：
+脚本把响应消息包含 `checkin! got`、`checkin repeats`、`today's observation logged`，或响应 `code == 0` 视为正常。这个判断依赖接口返回约定，必要时请结合日志和官网核实。
 
-| 仓库类型 | 定时任务状态 | 说明 |
-|----------|-------------|------|
-| 新仓库 | ❌ 不触发 | GitHub 会暂停定时任务执行 |
-| 不活跃仓库 | ❌ 不触发 | 长时间没有新活动的仓库 |
-| 活跃仓库 | ✅ 正常触发 | 需要持续活跃 1-2 周后才恢复 |
+### 显示“未配置 GLADOS_COOKIE”，但我已经配置了独立账号？
 
-**现象**：
-- 手动点击 "Run workflow" 可以正常运行 ✅
-- 定时任务不会自动执行 ❌
-- Actions 页面没有定时运行记录
+如果独立账号 Cookie 全部为空，程序会尝试旧变量，因此可能出现这条提示。检查 Secret 名称、是否在正确仓库创建，以及工作流 `env` 是否映射了相同名称。当前默认只映射 U156/U290。
 
-**解决方案**：
-- **推荐**：使用 cron-job.org（免费、稳定、立即生效）
-- **备选**：连续 1-2 周每天手动触发一次 + keep-alive.yml 维护活跃度
+### 显示“没有权限”或反复失败？
 
-相关 GitHub Discussions：
-- [Discussion #185355](https://github.com/orgs/community/discussions/185355) - 新仓库定时任务不运行
-- [Discussion #185212](https://github.com/orgs/community/discussions/185212) - scheduled workflow 从不触发
+先在浏览器确认账号能够正常登录、手动签到，再重新获取同一次登录的完整 Cookie 和 User-Agent。重点检查 `gld:sess`、`gld:sess.sig` 是否齐全，是否误贴为 JSON 导出、其他账号的值或已失效会话。
 
-[🔝 回到开头了解推荐方案](#-推荐方案-cron-joborg-配置定时)
+Cookie 没有可由本项目保证的固定有效期。过期、退出登录或服务端会话策略变化后，需要更新对应 Secret。
 
-</details>
+### 显示“Checkin Repeats! Please Try Tomorrow”？
 
-<details>
-<summary><b>Q: cron-job.org 测试返回 401/422 错误怎么办？</b></summary>
+表示接口报告已经签到，脚本按正常处理。重复运行不保证重复获得奖励。
 
-请对照以下检查：
+### 显示“please checkin via https://glados.cloud”？
 
-**401 Unauthorized（认证失败）**：
-```
-❌ Authorization: ghp_abc123...
-✅ Authorization: token ghp_abc123...
-```
-注意：`token ` 前缀后面必须有一个**空格**！
+核对运行的是否为当前脚本、分支是否正确，并检查登录域名与 Cookie。当前脚本按请求域名设置签到 token，不需要把其他教程中的旧 token 硬编码进去。接口规则仍可能变化，保留不含凭证的错误信息用于排查。
 
-**422 Unprocessable Entity（请求无法处理）**：
-```
-❌ Body: {}
-✅ Body: {"ref": "main"}
-```
-GitHub API 要求必须指定分支名。
+### 没有收到微信通知？
 
-**其他检查**：
-- Accept 头是否完整：`application/vnd.github.v3+json`
-- Token 是否有 `workflow` 权限
-- Token 是否过期（检查 Expiration 设置）
+1. 确认四项微信 Secrets 完整，且来自同一测试号。
+2. 确认接收人已经关注该测试号，OpenID 属于该测试号。
+3. 确认模板 ID 正确，字段使用本文的 `keyword1`、`keyword2`、`keyword3`。
+4. 查看“获取微信 access_token 失败”或“微信测试号通知失败”后的错误码和消息，再按微信官方说明排查。
+5. 如果没有账号、配置解析失败或任务提前中断，程序可能尚未走到通知步骤。
 
-[🔝 查看完整陷阱列表](#-常见陷阱与错误)
+### 为什么运行较慢或超过十分钟？
 
-</details>
+账号按顺序处理。每个首次失败账号会等待 60 秒，每次 HTTP 请求超时为 10 秒，还可能依次尝试多个域名。当前工作流整个任务的超时上限为 10 分钟；账号较多且连续失败时可能被中止，无法保证发送最终通知。
 
-<details>
-<summary><b>Q: 显示 "please checkin via https://glados.cloud" 怎么办？</b></summary>
+### 日志时间与北京时间不同？
 
-这表示你使用的签到脚本已过期！GLaDOS 在 2026 年更新了 API，旧脚本的 token 值 `glados.one` 已失效。
+脚本使用运行环境的本地时间生成日志，没有单独设置北京时间。cron-job.org 的 `Asia/Shanghai` 控制定时触发时间，不能据日志时间直接认定定时配置错误。
 
-**解决方案**：使用本项目，我们已经修复了这个问题（token 改为 `glados.cloud`）。
+### 如何安全反馈问题？
 
-</details>
+到 [Issues](https://github.com/sufeifan123/qq-glados/issues) 描述操作步骤、运行时间、是否手动/API 触发及脱敏后的错误信息。不要附上 Cookie、令牌、AppSecret、完整请求头或含这些信息的截图；分享日志前先检查异常详情。
 
-<details>
-<summary><b>Q: 显示 "Checkin Repeats! Please Try Tomorrow" 是什么意思？</b></summary>
+## 本地运行与测试
 
-这表示**今天已经成功签到过了**！这是正常的成功响应，说明签到功能正常工作。
+一般用户使用 GitHub Actions 即可。需要本地调试时，建议使用与工作流一致的 **Python 3.11**。
 
-</details>
+在项目根目录安装依赖：
 
-<details>
-<summary><b>Q: Cookie 多久过期？</b></summary>
-
-大约 30 天。过期后重新按第二步获取新 Cookie，更新 Secret 即可。
-
-</details>
-
-<details>
-<summary><b>Q: 支持多个账号吗？</b></summary>
-
-支持！推荐使用本文开头的独立账号配置。旧 `GLADOS_COOKIE` 也可用英文符号 `#` 分隔多个 Cookie：
-```
-cookie1#cookie2#cookie3
+```bash
+python -m pip install -r requirements.txt
 ```
 
-</details>
+作用：使用当前 Python 对应的 pip 安装依赖；`-r requirements.txt` 表示从该文件读取依赖清单。此操作会修改当前 Python 环境中的软件包，建议在虚拟环境中执行。
 
-<details>
-<summary><b>Q: 没有收到微信推送怎么办？</b></summary>
+通过你自己的安全方式将账号 Cookie 等配置注入环境变量，再运行：
 
-1. 检查 `PUSHPLUS_TOKEN` 是否配置正确
-2. 在 PushPlus 网站测试发送功能是否正常
-3. 查看 Actions 运行日志是否有错误
+```bash
+python checkin.py
+```
 
-</details>
+作用：运行签到脚本。**此操作会向 GLaDOS 发送真实请求；微信配置完整时还会发送通知。** 不要把真实密钥写入脚本或命令历史。
 
-<details>
-<summary><b>Q: Actions 运行失败怎么办？</b></summary>
+本地环境不受 GitHub 工作流映射限制，可以直接设置脚本支持的环境变量。Windows 上若命令名不同，请使用本机 Python 的实际命令。
 
-1. 点击失败的运行记录查看详细日志
-2. 检查 Cookie 格式是否正确
-3. 如果还是不行，欢迎提 Issue！
+离线测试：
 
-</details>
+```bash
+python -m unittest discover -s tests -v
+```
 
----
+作用：发现并运行测试；`-s tests` 指定测试目录，`-v` 显示各用例结果。现有测试拦截 HTTP，不会执行真实签到或微信通知。
 
-## ⚠️ 为什么 GitHub Actions 定时不可靠？
+现有用例覆盖账号读取、旧格式兼容、User-Agent 优先级、请求中的账号隔离、失败账号继续处理及微信分批消息等行为。离线测试通过不代表线上 Cookie 或外部接口一定可用。
 
-### 问题背景
+## 项目文件与参考资料
 
-从 2025 年底开始，GitHub 对 **Actions 的定时任务（schedule trigger）** 实施了更严格的限制，影响了大量新仓库和不活跃仓库。
+| 路径 | 说明 |
+| --- | --- |
+| [checkin.py](checkin.py) | 账号读取、签到、状态查询和微信通知 |
+| [.github/workflows/checkin.yml](.github/workflows/checkin.yml) | Actions 运行环境和变量映射；目前仅手动/API 触发 |
+| [requirements.txt](requirements.txt) | Python 依赖，目前为 `requests>=2.28.0` |
+| [tests/test_accounts.py](tests/test_accounts.py) | 离线单元测试 |
+| [images/](images/) | 仓库保留的历史教程截图，可能与当前界面或配置不同 |
+| [README.md](README.md) | 当前使用说明 |
 
-### 具体表现
+参考资料：
 
-| 现象 | 说明 |
-|------|------|
-| ✅ 手动运行正常 | 点击 "Run workflow" 可以成功执行 |
-| ❌ 定时不执行 | 到了设定时间没有任何运行记录 |
-| ⏳ 长时间无反应 | 等待数天仍不会自动触发 |
+- [GitHub：手动运行工作流](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow)
+- [GitHub：触发 workflow_dispatch 的 REST API](https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event)
+- [GitHub：工作流触发事件](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows)
+- [微信公众平台接口测试号](https://mp.weixin.qq.com/debug/cgi-bin/sandbox?t=sandbox/login)
+- [微信：模板消息接口](https://developers.weixin.qq.com/doc/offiaccount/Message_Management/Template_Message_Interface.html)
+- [cron-job.org](https://cron-job.org)
 
-### 根本原因
+原 README 提及的上游项目：[lankerr/2026-glados-checkin](https://github.com/lankerr/2026-glados-checkin)。感谢相关开源工作。
 
-这是 GitHub 的**资源管理策略**，用于减少闲置资源消耗：
+### 许可证说明
 
-1. **新仓库限制**：刚创建的仓库，定时任务默认不会自动运行
-2. **活跃度要求**：仓库需要有持续的活动（commit、issue、PR 等）
-3. **恢复周期**：通常需要 1-2 周的活跃期才会恢复定时任务
-
-### 解决方案对比
-
-| 方案 | 优点 | 缺点 | 推荐度 |
-|------|------|------|--------|
-| **cron-job.org** | 免费、稳定、立即生效 | 需要注册第三方服务 | ⭐⭐⭐⭐⭐ |
-| GitHub Actions + keep-alive | 完全在 GitHub 内 | 需等待 1-2 周恢复期 | ⭐⭐ |
-| 每天手动触发 | 简单直接 | 无法自动化 | ⭐ |
-
-### 已采取的措施
-
-本项目已包含 `keep-alive.yml` 文件，每天自动更新时间戳以维持仓库活跃度。但这对**新仓库**仍然需要 1-2 周的积累期。
-
-**因此强烈推荐使用 cron-job.org！** [🔝 查看配置教程](#-推荐方案-cron-joborg-配置定时)
-
----
-
-## 📂 项目文件
-
-| 文件 | 说明 |
-|------|------|
-| `checkin.py` | 核心签到脚本 |
-| `.github/workflows/checkin.yml` | GitHub Actions 配置 |
-| `requirements.txt` | Python 依赖 |
-| `images/` | 教程截图 |
-
----
-
-## 🤝 需要帮助？
-
-- 📝 **提 Issue**：遇到问题请提 Issue，作者很乐意帮助技术新手！
-- ⭐ **Star**：如果对你有帮助，请点个 Star 支持一下
-- 🍴 **Fork**：欢迎 Fork 并贡献代码
-
----
-
-## � 更新日志
-
-### v1.1.0 (2026-01-25) 🔥 重大修复
-
-**问题**：签到始终返回 "please checkin via https://glados.cloud"，导致机器人无法签到。
-
-**原因**：GLaDOS 官方更新了 API，签到 token 必须从 `glados.one` 改为 `glados.cloud`。
-
-**修复**：更新 `checkin.py` 中的 token 参数。
-
-**排查过程**：
-1. 使用浏览器 DevTools 抓包分析真实签到请求
-2. 对比 Python 脚本与浏览器请求的差异
-3. 尝试添加 Headers、模拟 TLS 指纹等方案（均无效）
-4. 最终通过测试不同 token 值发现问题根源
-
-> 💡 如果你在使用其他签到项目遇到同样问题，可以参考本项目的修复方案！
-
-### v1.0.0 (2026-01-20)
-
-- 初始版本发布
-- 支持 glados.cloud 域名
-- PushPlus 微信推送
-- GitHub Actions 自动签到
-
----
-
-## 📝 License
-
-MIT
-
----
-
-<div align="center">
-
-**Made with ❤️ for GLaDOS users in 2026**
-
-**🔧 本项目经过 2026-01-25 抓包验证，确认可用！**
-
-**⭐ Star 一下，支持作者持续更新！⭐**
-
-</div>
+旧 README 标注为 MIT，但当前仓库未附独立的 `LICENSE` 文件。具体授权及上游版权信息需进一步核实、补齐，请勿把本说明视为新增的许可证授权。
