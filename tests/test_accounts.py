@@ -65,12 +65,17 @@ class AccountTests(unittest.TestCase):
     def test_requests_use_matching_cookie_and_user_agent(self):
         response = Mock(status_code=200)
         response.json.return_value = {'code': 0}
-        with patch.object(checkin.requests, 'post', return_value=response) as post:
+        challenge = Mock(status_code=200)
+        challenge.json.return_value = {'code': 0, 'nonce': 'test-nonce'}
+        with patch.object(checkin.requests, 'get', return_value=challenge) as get, patch.object(checkin.time, 'sleep'), patch.object(checkin.requests, 'post', return_value=response) as post:
             for name in ('main', 'backup'):
                 checkin.GLaDOS(f'gld:sess={name}; gld:sess.sig=sig', f'{name}-agent').checkin()
-            for call, name in zip(post.call_args_list, ('main', 'backup')):
-                self.assertEqual(call.kwargs['headers']['User-Agent'], f'{name}-agent')
-                self.assertEqual(call.kwargs['headers']['Cookie'], f'gld:sess={name}; gld:sess.sig=sig')
+            self.assertEqual(post.call_count, 2)
+            self.assertEqual(get.call_count, 2)
+            for calls in (get.call_args_list, post.call_args_list):
+                for call, name in zip(calls, ('main', 'backup')):
+                    self.assertEqual(call.kwargs['headers']['User-Agent'], f'{name}-agent')
+                    self.assertEqual(call.kwargs['headers']['Cookie'], f'gld:sess={name}; gld:sess.sig=sig')
 
     def test_invalid_new_configuration_does_not_fall_back(self):
         for raw in ('{"bad": true}', '["first", "second"]', 'first#second'):
@@ -150,3 +155,4 @@ class AccountTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+

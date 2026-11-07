@@ -11,12 +11,15 @@ GLaDOS 自动签到
 - 不在日志中输出 Cookie / Secret
 """
 
+import hashlib
 import json
+import math
 import os
 import re
 import sys
 import time
 from datetime import datetime
+from urllib.parse import urlsplit
 
 import requests
 
@@ -61,6 +64,7 @@ NORMAL_CHECKIN_MESSAGES = (
 
 CURRENT_SESSION_COOKIES = ("gld:sess", "gld:sess.sig")
 LEGACY_SESSION_COOKIES = ("koa:sess", "koa:sess.sig")
+CHECKIN_CHALLENGE_DELAY = 2.7
 
 
 # ================= 工具函数 =================
@@ -427,8 +431,8 @@ class GLaDOS:
                 "2026-09 新版接口可能返回‘没有权限’"
             )
 
-    def request(self, method, path, data=None):
-        for domain in DOMAINS:
+    def request(self, method, path, data=None, domains=None):
+        for domain in DOMAINS if domains is None else domains:
             try:
                 headers = HEADERS.copy()
                 headers.update(get_browser_headers(self.user_agent))
@@ -437,12 +441,6 @@ class GLaDOS:
                 headers["Referer"] = f"{domain}/console/checkin"
 
                 payload = data
-
-                # 签到 token 与当前尝试的域名保持一致
-                if path == "/api/user/checkin":
-                    payload = {
-                        "token": domain.split("://", 1)[1]
-                    }
 
                 url = f"{domain}{path}"
 
@@ -461,8 +459,19 @@ class GLaDOS:
                     )
 
                 if response.status_code == 200:
+                    result = response.json()
+                    if not isinstance(result, dict):
+                        log(f"⚠️ {domain} 响应格式异常")
+                        continue
                     self.domain = domain
-                    return response.json()
+                    return result
+
+                if response.status_code in (401, 403):
+                    return {
+                        "http_status": response.status_code,
+                        "message": "会话认证被拒绝，请检查登录状态",
+                        "stop_retry": True,
+                    }
 
                 log(
                     f"⚠️ {domain} 返回 HTTP "
@@ -470,14 +479,42 @@ class GLaDOS:
                 )
 
             except Exception as exc:
-                log(f"⚠️ {domain} 请求异常：{exc}")
+                # 异常文本可能包含 Cookie 或请求参数，仅记录异常类型。
+                log(f"⚠️ {domain} 请求异常：{type(exc).__name__}")
 
         return None
 
     def checkin(self):
+        """参考上游新流程：一次性验证、等待、同域名提交；不回退旧协议。"""
+        challenge = self.request("GET", "/api/user/checkin/challenge")
+        if not isinstance(challenge, dict):
+            return {"message": "获取签到验证失败，本次未提交签到"}
+        if challenge.get("stop_retry"):
+            return challenge
+
+        nonce = challenge.get("nonce")
+        ttl = challenge.get("ttl", 300000)
+        if (
+            challenge.get("code") != 0
+            or not isinstance(nonce, str) or not 0 < len(nonce) <= 4096
+            or type(ttl) not in (int, float)
+            or (type(ttl) is float and not math.isfinite(ttl))
+            or ttl <= CHECKIN_CHALLENGE_DELAY * 1000
+        ):
+            return {"message": "签到验证无效或有效期不足，本次未提交签到"}
+
+        domain = self.domain
+        received_at = time.monotonic()
+        proof = hashlib.sha256((nonce + ".glados-observe-v1").encode("utf-8")).hexdigest()
+        time.sleep(CHECKIN_CHALLENGE_DELAY)
+        if (time.monotonic() - received_at) * 1000 >= ttl:
+            return {"message": "签到验证已过期，本次未提交签到"}
+
         return self.request(
             "POST",
             "/api/user/checkin",
+            data={"token": urlsplit(domain).hostname, "nonce": nonce, "proof": proof},
+            domains=(domain,),
         )
 
     def get_status(self):
@@ -548,6 +585,9 @@ def main():
                 normal = True
                 break
 
+            if isinstance(result, dict) and result.get("stop_retry"):
+                break
+
             if attempt == 1:
                 log("⚠️ 第一次签到异常，60 秒后重试")
                 time.sleep(60)
@@ -558,8 +598,9 @@ def main():
             else "Network Error"
         )
 
-        glados.get_status()
-        glados.get_points()
+        if not (isinstance(result, dict) and result.get("stop_retry")):
+            glados.get_status()
+            glados.get_points()
 
         if normal:
             success_count += 1
@@ -615,3 +656,4 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+

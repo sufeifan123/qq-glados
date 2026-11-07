@@ -402,6 +402,14 @@ https://api.github.com/repos/OWNER/REPO/actions/workflows/checkin.yml/dispatches
 
 Cookie 没有可由本项目保证的固定有效期。过期、退出登录或服务端会话策略变化后，需要更新对应 Secret。
 
+### 签到连续只获得 1 积分，或连续签到天数归零？
+
+本次参考 [上游项目的新签到流程](https://github.com/lankerr/2026-glados-checkin#签到只获得-1-积分28)更新：先请求 `/api/user/checkin/challenge`，取得一次性 `nonce`，等待 2.7 秒后，将 `token`、`nonce` 和 `proof` 一起提交到签发验证的同一域名。验证获取失败、格式异常或过期时不提交签到，也不会回退到仅发送 token 的旧流程；每次重试都重新获取验证。HTTP 401/403 会停止该账号的重试和后续查询。
+
+现有独立账号 Secrets、User-Agent、微信通知及外部定时触发配置继续使用。更新后应在下一签到日首次签到时，核对官网积分流水及连续签到记录。`Checkin! Got 1 Points` 仍表示本次已入账，不作为失败反复重试；旧记录能否恢复、积分是否补发以及更新后的实际奖励均由服务端决定。
+
+脚本中的“积分”是当前总余额，“剩余天数”是会员剩余天数，均不是当日奖励或连续签到天数。
+
 ### 显示“Checkin Repeats! Please Try Tomorrow”？
 
 表示接口报告已经签到，脚本按正常处理。重复运行不保证重复获得奖励。
@@ -487,3 +495,4 @@ python -m unittest discover -s tests -v
 ### 许可证说明
 
 旧 README 标注为 MIT，但当前仓库未附独立的 `LICENSE` 文件。具体授权及上游版权信息需进一步核实、补齐，请勿把本说明视为新增的许可证授权。
+
